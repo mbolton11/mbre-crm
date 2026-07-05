@@ -269,6 +269,16 @@ async function init() {
   STAGES.forEach(s => stageSel.add(new Option(s, s)));
   STAGES.forEach(s => $('stage-filter').add(new Option(s, s)));
 
+  // Auto-fill the location code as the address is typed (unless the user typed their own).
+  const addrEl = form.elements['address'];
+  const codeEl = form.elements['location_code'];
+  addrEl.addEventListener('input', () => {
+    if (codeEl.dataset.touched === '1') return;
+    const code = computeLocationCode(addrEl.value);
+    if (code) codeEl.value = code;
+  });
+  codeEl.addEventListener('input', () => { codeEl.dataset.touched = '1'; });
+
   const { data: { session } } = await sb.auth.getSession();
   showView(session);
   sb.auth.onAuthStateChange((_e, sess) => showView(sess));
@@ -377,10 +387,13 @@ function openDialog(id) {
     for (const el of form.elements) {
       if (el.name && l[el.name] != null) el.value = l[el.name];
     }
+    // An existing code counts as user-set, so typing the address won't overwrite it.
+    form.elements['location_code'].dataset.touched = l.location_code ? '1' : '';
     del.style.display = 'inline-flex';
   } else {
     $('dlg-title').textContent = 'Add lead';
     form.elements['stage'].value = STAGES[0];
+    form.elements['location_code'].dataset.touched = '';
     del.style.display = 'none';
   }
   dialog.showModal();
@@ -415,6 +428,31 @@ $('delete-btn').addEventListener('click', async () => {
   dialog.close();
   loadLeads();
 });
+
+/* ================= Location code =================
+   3-digit code: first two digits = the cross-street number,
+   third digit = the avenue block (hundreds digit of the building number).
+   Example: "230 W 36th St" -> cross street 36, building 230 (hundreds = 2) -> "362".
+   Returns null when the address isn't a numbered side street (e.g. an avenue). */
+function computeLocationCode(address) {
+  if (!address) return null;
+  const cross = extractCrossStreet(address);
+  const buildMatch = String(address).match(/\d+/);   // first number = building number
+  if (cross == null || !buildMatch) return null;
+  const building = parseInt(buildMatch[0], 10);
+  const blockDigit = Math.floor((building % 1000) / 100);  // hundreds digit, 0-9
+  return String(cross).padStart(2, '0') + String(blockDigit);
+}
+
+function extractCrossStreet(address) {
+  // Prefer an ordinal number followed by St/Street, e.g. "36th St", "42nd Street".
+  let m = address.match(/(\d{1,3})\s*(?:st|nd|rd|th)\s+(?:st\b|street\b)/i);
+  if (m) return parseInt(m[1], 10);
+  // Otherwise a direction + ordinal, e.g. "W 36th", "East 42nd".
+  m = address.match(/\b(?:w|e|west|east)\.?\s*(\d{1,3})\s*(?:st|nd|rd|th)\b/i);
+  if (m) return parseInt(m[1], 10);
+  return null;
+}
 
 /* ================= Utils ================= */
 function esc(s) {
