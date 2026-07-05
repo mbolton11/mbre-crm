@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MBRE Tenant-Rep CRM</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --ink: #1a2233;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --brand: #1f4e79;
+    --brand-dark: #163a5c;
+    --accent: #2563eb;
+    --danger: #b91c1c;
+    --shadow: 0 1px 3px rgba(16,24,40,.08), 0 1px 2px rgba(16,24,40,.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.45;
+  }
+  button { font: inherit; cursor: pointer; }
+  input, select, textarea { font: inherit; }
+
+  /* ---------- Login ---------- */
+  #login-view {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+  .login-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 32px;
+    width: 100%;
+    max-width: 380px;
+  }
+  .login-card h1 { margin: 0 0 4px; font-size: 22px; color: var(--brand); }
+  .login-card p.sub { margin: 0 0 24px; color: var(--muted); font-size: 14px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; color: #374151; }
+  .field input, .field select, .field textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #fff;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent);
+  }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 10px 16px; border: 1px solid transparent; border-radius: 9px;
+    background: var(--brand); color: #fff; font-weight: 600;
+  }
+  .btn:hover { background: var(--brand-dark); }
+  .btn.block { width: 100%; }
+  .btn.secondary { background: #fff; color: var(--ink); border-color: var(--line); }
+  .btn.secondary:hover { background: #f3f4f6; }
+  .btn.danger { background: #fff; color: var(--danger); border-color: #fca5a5; }
+  .btn.danger:hover { background: #fef2f2; }
+  .msg { font-size: 13px; margin-top: 12px; min-height: 18px; }
+  .msg.error { color: var(--danger); }
+  .msg.ok { color: #15803d; }
+
+  /* ---------- App ---------- */
+  #app-view { display: none; }
+  header.topbar {
+    background: var(--brand); color: #fff;
+    padding: 12px 20px; display: flex; align-items: center; gap: 14px;
+    position: sticky; top: 0; z-index: 5;
+  }
+  header.topbar h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: .2px; }
+  header.topbar .spacer { flex: 1; }
+  header.topbar .who { font-size: 13px; opacity: .85; }
+  header.topbar .btn.secondary { background: rgba(255,255,255,.14); color: #fff; border-color: rgba(255,255,255,.25); }
+  header.topbar .btn.secondary:hover { background: rgba(255,255,255,.24); }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 20px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 18px; }
+  .toolbar .grow { flex: 1; }
+  .toolbar select { padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+  .count { color: var(--muted); font-size: 13px; }
+
+  .stage-group { margin-bottom: 26px; }
+  .stage-head {
+    display: flex; align-items: center; gap: 10px; margin: 0 0 10px;
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+  }
+  .stage-head .pill { background: #eef2ff; color: var(--brand); padding: 2px 9px; border-radius: 999px; font-size: 12px; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .lead {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .lead .tenant { font-weight: 700; font-size: 15px; }
+  .lead .addr { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .lead .meta { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 13px; }
+  .lead .meta .k { color: var(--muted); }
+  .lead .row-actions { margin-top: 12px; display: flex; gap: 8px; }
+  .lead .row-actions .btn { padding: 6px 12px; font-size: 13px; }
+  .badge-code { display: inline-block; background: #111827; color: #fff; border-radius: 6px; padding: 1px 7px; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  .empty { text-align: center; color: var(--muted); padding: 60px 20px; }
+
+  /* ---------- Dialog ---------- */
+  dialog {
+    border: none; border-radius: 14px; padding: 0; width: 100%; max-width: 560px;
+    box-shadow: 0 20px 40px rgba(16,24,40,.24);
+  }
+  dialog::backdrop { background: rgba(16,24,40,.45); }
+  .dlg-head { padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; }
+  .dlg-head h2 { margin: 0; font-size: 18px; }
+  .dlg-body { padding: 20px 22px; max-height: 65vh; overflow: auto; }
+  .dlg-foot { padding: 16px 22px; border-top: 1px solid var(--line); display: flex; gap: 10px; justify-content: flex-end; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
+  fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 0 0 16px; }
+  fieldset legend { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); padding: 0 6px; }
+</style>
+</head>
+<body>
+
+<!-- ===================== LOGIN ===================== -->
+<div id="login-view">
+  <form class="login-card" id="login-form">
+    <h1>MBRE Tenant-Rep CRM</h1>
+    <p class="sub">Sign in to your leads.</p>
+    <div class="field">
+      <label for="login-email">Email</label>
+      <input id="login-email" type="email" autocomplete="username" required>
+    </div>
+    <div class="field">
+      <label for="login-password">Password</label>
+      <input id="login-password" type="password" autocomplete="current-password" required>
+    </div>
+    <button class="btn block" type="submit" id="login-btn">Sign in</button>
+    <div class="msg" id="login-msg"></div>
+  </form>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app-view">
+  <header class="topbar">
+    <h1>MBRE Tenant-Rep CRM</h1>
+    <div class="spacer"></div>
+    <span class="who" id="who"></span>
+    <button class="btn secondary" id="signout-btn">Sign out</button>
+  </header>
+
+  <div class="wrap">
+    <div class="toolbar">
+      <button class="btn" id="add-btn">+ Add lead</button>
+      <div class="grow"></div>
+      <label class="count" for="stage-filter">Show:</label>
+      <select id="stage-filter"><option value="">All stages</option></select>
+      <span class="count" id="lead-count"></span>
+    </div>
+
+    <div id="leads-container"></div>
+  </div>
+</div>
+
+<!-- ===================== LEAD DIALOG ===================== -->
+<dialog id="lead-dialog">
+  <form id="lead-form" method="dialog">
+    <div class="dlg-head"><h2 id="dlg-title">Add lead</h2></div>
+    <div class="dlg-body">
+      <fieldset>
+        <legend>Property</legend>
+        <div class="grid2">
+          <div class="field"><label>Address</label><input name="address" required></div>
+          <div class="field"><label>Floor</label><input name="floor"></div>
+          <div class="field"><label>Location code</label><input name="location_code" inputmode="numeric" placeholder="e.g. 362"></div>
+          <div class="field"><label>Zone</label><input name="zone"></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Tenant &amp; contact</legend>
+        <div class="grid2">
+          <div class="field"><label>Tenant name</label><input name="tenant_name"></div>
+          <div class="field"><label>RSF</label><input name="rsf" inputmode="numeric"></div>
+          <div class="field"><label>Contact name</label><input name="contact_name"></div>
+          <div class="field"><label>Lease expiration</label><input name="lease_expiration" type="date"></div>
+          <div class="field"><label>Email</label><input name="email" type="email"></div>
+          <div class="field"><label>Phone</label><input name="phone"></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Pipeline</legend>
+        <div class="grid2">
+          <div class="field"><label>Stage</label><select name="stage" id="stage-select"></select></div>
+          <div class="field"><label>Owner</label>
+            <select name="owner"><option value="">—</option><option>Michael</option><option>Assistant</option></select>
+          </div>
+          <div class="field"><label>Next follow-up</label><input name="next_followup" type="date"></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Pop-in tracking</legend>
+        <div class="grid2">
+          <div class="field"><label>Last pop-in date</label><input name="last_popin_date" type="date"></div>
+          <div class="field"><label>Pop-in count</label><input name="popin_count" inputmode="numeric"></div>
+        </div>
+        <div class="field"><label>Pop-in log</label><textarea name="popin_log" rows="3"></textarea></div>
+      </fieldset>
+
+      <div class="field"><label>Notes</label><textarea name="notes" rows="4"></textarea></div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="btn danger" id="delete-btn" style="margin-right:auto; display:none;">Delete</button>
+      <button type="button" class="btn secondary" id="cancel-btn">Cancel</button>
+      <button type="submit" class="btn" id="save-btn">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ================= CONFIG (your Supabase project) ================= */
+const SUPABASE_URL = 'https://tgcjnkscfgbmmtmxmbek.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_U2PnOyYd1Uc-5IC8Ox5xmQ_Nfqo8zD3';
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* Pipeline stages, coldest -> closed, plus the parking stage. */
+const STAGES = [
+  '1 · Gatekeeper Drop-In',
+  '2 · Decision Maker – Deferred',
+  '3 · Lease Timing Known',
+  '4 · Meeting / In Discussion',
+  '5 · Non-Exclusive Showing',
+  '6 · Exclusive Client',
+  '7 · Survey & Touring',
+  '8 · Deal / Closing',
+  'Lost / Dormant'
+];
+
+/* Columns that must never be sent as empty string ('' breaks date/number columns). */
+const NULL_IF_EMPTY = ['rsf','lease_expiration','next_followup','last_popin_date','popin_count'];
+const NUMERIC = ['rsf','popin_count'];
+
+/* ================= Elements ================= */
+const $ = (id) => document.getElementById(id);
+const loginView = $('login-view'), appView = $('app-view');
+const dialog = $('lead-dialog'), form = $('lead-form');
+let leads = [];
+let editingId = null;
+
+/* ================= Boot ================= */
+init();
+async function init() {
+  // Fill the stage dropdowns.
+  const stageSel = $('stage-select');
+  STAGES.forEach(s => stageSel.add(new Option(s, s)));
+  STAGES.forEach(s => $('stage-filter').add(new Option(s, s)));
+
+  const { data: { session } } = await sb.auth.getSession();
+  showView(session);
+  sb.auth.onAuthStateChange((_e, sess) => showView(sess));
+}
+
+function showView(session) {
+  if (session) {
+    loginView.style.display = 'none';
+    appView.style.display = 'block';
+    $('who').textContent = session.user.email;
+    loadLeads();
+  } else {
+    appView.style.display = 'none';
+    loginView.style.display = 'grid';
+  }
+}
+
+/* ================= Auth ================= */
+$('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('login-msg'); msg.className = 'msg'; msg.textContent = 'Signing in…';
+  $('login-btn').disabled = true;
+  const { error } = await sb.auth.signInWithPassword({
+    email: $('login-email').value.trim(),
+    password: $('login-password').value
+  });
+  $('login-btn').disabled = false;
+  if (error) { msg.className = 'msg error'; msg.textContent = error.message; }
+  else { msg.textContent = ''; }
+});
+
+$('signout-btn').addEventListener('click', () => sb.auth.signOut());
+
+/* ================= Load & render ================= */
+async function loadLeads() {
+  const container = $('leads-container');
+  container.innerHTML = '<div class="empty">Loading…</div>';
+  const { data, error } = await sb.from('leads')
+    .select('*')
+    .order('location_code', { ascending: true, nullsFirst: false });
+  if (error) { container.innerHTML = '<div class="empty">Could not load leads: ' + esc(error.message) + '</div>'; return; }
+  leads = data || [];
+  render();
+}
+
+function render() {
+  const container = $('leads-container');
+  const filter = $('stage-filter').value;
+  const shown = filter ? leads.filter(l => l.stage === filter) : leads;
+  $('lead-count').textContent = shown.length + (shown.length === 1 ? ' lead' : ' leads');
+
+  if (!shown.length) {
+    container.innerHTML = '<div class="empty">No leads yet. Click <b>+ Add lead</b> to create your first one.</div>';
+    return;
+  }
+
+  // Group by stage, in pipeline order.
+  const order = filter ? [filter] : STAGES.concat(['(No stage)']);
+  let html = '';
+  order.forEach(stage => {
+    const group = shown.filter(l => (l.stage || '(No stage)') === stage);
+    if (!group.length) return;
+    html += '<div class="stage-group"><div class="stage-head">' + esc(stage) +
+            ' <span class="pill">' + group.length + '</span></div><div class="cards">';
+    group.forEach(l => { html += leadCard(l); });
+    html += '</div></div>';
+  });
+  container.innerHTML = html;
+
+  container.querySelectorAll('[data-edit]').forEach(btn =>
+    btn.addEventListener('click', () => openDialog(btn.getAttribute('data-edit'))));
+}
+
+function leadCard(l) {
+  const line = [];
+  if (l.contact_name) line.push(['Contact', l.contact_name]);
+  if (l.phone) line.push(['Phone', l.phone]);
+  if (l.rsf) line.push(['RSF', Number(l.rsf).toLocaleString()]);
+  if (l.lease_expiration) line.push(['Lease exp.', l.lease_expiration]);
+  if (l.next_followup) line.push(['Follow-up', l.next_followup]);
+  if (l.owner) line.push(['Owner', l.owner]);
+  const meta = line.map(([k,v]) => '<div class="k">' + esc(k) + '</div><div>' + esc(v) + '</div>').join('');
+  const addr = [l.address, l.floor ? 'Fl ' + l.floor : ''].filter(Boolean).join(' · ');
+  return '<div class="lead">' +
+    (l.location_code ? '<span class="badge-code">' + esc(l.location_code) + '</span> ' : '') +
+    '<span class="tenant">' + esc(l.tenant_name || '(unnamed tenant)') + '</span>' +
+    '<div class="addr">' + esc(addr || '—') + '</div>' +
+    (meta ? '<div class="meta">' + meta + '</div>' : '') +
+    '<div class="row-actions"><button class="btn secondary" data-edit="' + l.id + '">Edit</button></div>' +
+    '</div>';
+}
+
+$('stage-filter').addEventListener('change', render);
+
+/* ================= Dialog / save / delete ================= */
+$('add-btn').addEventListener('click', () => openDialog(null));
+$('cancel-btn').addEventListener('click', () => dialog.close());
+
+function openDialog(id) {
+  editingId = id;
+  form.reset();
+  const del = $('delete-btn');
+  if (id) {
+    const l = leads.find(x => String(x.id) === String(id));
+    $('dlg-title').textContent = 'Edit lead';
+    for (const el of form.elements) {
+      if (el.name && l[el.name] != null) el.value = l[el.name];
+    }
+    del.style.display = 'inline-flex';
+  } else {
+    $('dlg-title').textContent = 'Add lead';
+    form.elements['stage'].value = STAGES[0];
+    del.style.display = 'none';
+  }
+  dialog.showModal();
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {};
+  for (const el of form.elements) {
+    if (!el.name) continue;
+    let v = el.value;
+    if (v === '' && NULL_IF_EMPTY.includes(el.name)) v = null;
+    else if (v === '') v = null;
+    else if (NUMERIC.includes(el.name)) v = Number(v);
+    payload[el.name] = v;
+  }
+  $('save-btn').disabled = true;
+  let error;
+  if (editingId) ({ error } = await sb.from('leads').update(payload).eq('id', editingId));
+  else ({ error } = await sb.from('leads').insert(payload));
+  $('save-btn').disabled = false;
+  if (error) { alert('Could not save: ' + error.message); return; }
+  dialog.close();
+  loadLeads();
+});
+
+$('delete-btn').addEventListener('click', async () => {
+  if (!editingId) return;
+  if (!confirm('Delete this lead? This cannot be undone.')) return;
+  const { error } = await sb.from('leads').delete().eq('id', editingId);
+  if (error) { alert('Could not delete: ' + error.message); return; }
+  dialog.close();
+  loadLeads();
+});
+
+/* ================= Utils ================= */
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+</script>
+</body>
+</html>
