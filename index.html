@@ -92,6 +92,33 @@
   .toolbar select { padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
   .count { color: var(--muted); font-size: 13px; }
 
+  /* ---------- Quick capture ---------- */
+  .capture {
+    background: linear-gradient(180deg, #fbfdff, #f3f7fc);
+    border: 1px solid #dbe6f3; border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 18px; box-shadow: var(--shadow);
+  }
+  .capture-head { font-weight: 700; font-size: 14px; color: var(--brand); margin-bottom: 8px; }
+  .capture textarea {
+    width: 100%; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px;
+    background: #fff; resize: vertical;
+  }
+  .capture textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  .capture-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .capture-msg { color: var(--muted); font-size: 13px; }
+  #mic-btn.rec { background: #fee2e2; color: var(--danger); border-color: #fca5a5; }
+
+  /* ---------- Pop-back-in match ---------- */
+  .cand {
+    display: block; width: 100%; text-align: left; background: #fff;
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+    margin-bottom: 8px; cursor: pointer;
+  }
+  .cand:hover { background: #f3f7fc; border-color: var(--accent); }
+  .cand-t { display: block; font-weight: 700; }
+  .cand-s { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .cand-go { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--accent); font-weight: 600; }
+
   .stage-group { margin-bottom: 26px; }
   .stage-head {
     display: flex; align-items: center; gap: 10px; margin: 0 0 10px;
@@ -160,6 +187,16 @@
   </header>
 
   <div class="wrap">
+    <div class="capture">
+      <div class="capture-head">⚡ Quick capture</div>
+      <textarea id="capture-text" rows="3" placeholder="Paste or dictate a note, e.g. &quot;230 W 36th, 14th floor, Acme Corp, about 8,000 sf, met John 212-555-1212, lease up next March&quot;"></textarea>
+      <div class="capture-actions">
+        <button class="btn secondary" id="mic-btn" type="button">🎤 Dictate</button>
+        <button class="btn" id="parse-btn" type="button">Parse &amp; review →</button>
+        <span class="capture-msg" id="capture-msg"></span>
+      </div>
+    </div>
+
     <div class="toolbar">
       <button class="btn" id="add-btn">+ Add lead</button>
       <div class="grow"></div>
@@ -227,6 +264,19 @@
       <button type="submit" class="btn" id="save-btn">Save</button>
     </div>
   </form>
+</dialog>
+
+<!-- ===================== POP-BACK-IN MATCH DIALOG ===================== -->
+<dialog id="match-dialog">
+  <div class="dlg-head"><h2>Pop back in?</h2></div>
+  <div class="dlg-body">
+    <p id="match-text" style="margin-top:0;"></p>
+    <div id="match-list"></div>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="btn secondary" id="match-cancel" style="margin-right:auto;">Cancel</button>
+    <button type="button" class="btn" id="match-new">Create new lead instead</button>
+  </div>
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -372,6 +422,147 @@ function leadCard(l) {
 }
 
 $('stage-filter').addEventListener('change', render);
+
+/* ================= Quick capture ================= */
+$('parse-btn').addEventListener('click', async () => {
+  const text = $('capture-text').value.trim();
+  const msg = $('capture-msg');
+  if (!text) { msg.textContent = 'Type or dictate a note first.'; return; }
+  $('parse-btn').disabled = true;
+  msg.textContent = 'Reading your note…';
+  const { data, error } = await sb.functions.invoke('parse-lead', { body: { text } });
+  $('parse-btn').disabled = false;
+  if (error) { msg.textContent = 'Could not parse: ' + error.message; return; }
+  if (data && data.error) { msg.textContent = 'Could not parse: ' + data.error; return; }
+  msg.textContent = '';
+  const matches = findMatches(data);
+  if (matches.length) showMatchDialog(data, text, matches);
+  else prefillAndOpen(data);
+});
+
+// Find existing leads at the same address (so we can offer "pop back in").
+function normAddr(a) {
+  if (!a) return '';
+  return String(a).toLowerCase()
+    .replace(/\./g, '')
+    .replace(/,/g, ' ')
+    .replace(/\bwest\b/g, 'w').replace(/\beast\b/g, 'e')
+    .replace(/\bnorth\b/g, 'n').replace(/\bsouth\b/g, 's')
+    .replace(/\bstreet\b/g, 'st').replace(/\bavenue\b/g, 'ave')
+    .replace(/\bboulevard\b/g, 'blvd').replace(/\bplace\b/g, 'pl')
+    .replace(/\b(\d+)(st|nd|rd|th)\b/g, '$1')   // 36th -> 36
+    .replace(/\s+/g, ' ').trim();
+}
+
+function findMatches(fields) {
+  const a = normAddr(fields.address);
+  if (!a) return [];
+  const all = leads.filter(l => normAddr(l.address) === a);
+  const t = (fields.tenant_name || '').trim().toLowerCase();
+  if (t) {
+    const byTenant = all.filter(l => (l.tenant_name || '').trim().toLowerCase() === t);
+    if (byTenant.length) return byTenant;   // same tenant at this address wins
+  }
+  return all;
+}
+
+let pendingCapture = null;   // remembers the parsed fields while the match dialog is open
+
+function showMatchDialog(fields, note, matches) {
+  pendingCapture = { fields, note };
+  $('match-text').textContent = matches.length > 1
+    ? `You already have ${matches.length} leads at this address. Pop back into one, or create a new lead:`
+    : `You already have a lead at this address. Pop back in, or create a new lead:`;
+  const list = $('match-list');
+  list.innerHTML = '';
+  matches.forEach(l => {
+    const sub = [l.address, l.floor ? 'Fl ' + l.floor : ''].filter(Boolean).join(' · ');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'cand';
+    btn.innerHTML =
+      '<span class="cand-t">' + esc(l.tenant_name || '(unnamed tenant)') + '</span>' +
+      '<span class="cand-s">' + esc(sub) + ' — ' + esc(l.stage || '(no stage)') +
+      ' · ' + (Number(l.popin_count) || 0) + ' pop-ins</span>' +
+      '<span class="cand-go">Pop back in →</span>';
+    btn.addEventListener('click', () => { $('match-dialog').close(); applyPopIn(l, fields, note); });
+    list.appendChild(btn);
+  });
+  $('match-dialog').showModal();
+}
+
+$('match-new').addEventListener('click', () => {
+  $('match-dialog').close();
+  if (pendingCapture) prefillAndOpen(pendingCapture.fields);
+});
+$('match-cancel').addEventListener('click', () => $('match-dialog').close());
+
+// Log a pop-in on an existing lead: append the note, bump the count, set today's date,
+// and fill in any fields that were still blank. Never overwrites existing values.
+async function applyPopIn(lead, fields, note) {
+  const today = new Date().toISOString().slice(0, 10);
+  const payload = {
+    popin_count: (Number(lead.popin_count) || 0) + 1,
+    last_popin_date: today,
+    popin_log: (lead.popin_log ? lead.popin_log.trim() + '\n' : '') + today + ': ' + note,
+  };
+  const fillable = ['floor', 'tenant_name', 'rsf', 'contact_name', 'lease_expiration',
+    'email', 'phone', 'next_followup', 'location_code', 'notes'];
+  for (const k of fillable) {
+    const cur = lead[k], val = fields[k];
+    if ((cur === null || cur === undefined || cur === '') &&
+        val !== null && val !== undefined && val !== '') {
+      payload[k] = val;
+    }
+  }
+  const msg = $('capture-msg');
+  msg.textContent = 'Updating…';
+  const { error } = await sb.from('leads').update(payload).eq('id', lead.id);
+  if (error) { msg.textContent = 'Could not update: ' + error.message; return; }
+  $('capture-text').value = '';
+  msg.textContent = 'Updated ' + (lead.tenant_name || 'lead') + ' — pop-in #' + payload.popin_count + ' logged.';
+  loadLeads();
+}
+
+// Open the lead form as a NEW lead, pre-filled with the AI's fields for review.
+function prefillAndOpen(fields) {
+  editingId = null;
+  form.reset();
+  $('dlg-title').textContent = 'Review captured lead';
+  form.elements['stage'].value = STAGES[0];
+  form.elements['location_code'].dataset.touched = '';
+  for (const [k, v] of Object.entries(fields || {})) {
+    const el = form.elements[k];
+    if (el && v != null && v !== '') el.value = v;
+  }
+  const code = computeLocationCode(form.elements['address'].value);
+  if (code && !form.elements['location_code'].value) form.elements['location_code'].value = code;
+  $('delete-btn').style.display = 'none';
+  dialog.showModal();
+}
+
+// Voice dictation using the browser's built-in speech recognition (Chrome).
+(function setupMic() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const micBtn = $('mic-btn');
+  if (!SR) { micBtn.style.display = 'none'; return; }  // e.g. Safari/Firefox: use phone keyboard mic instead
+  const rec = new SR();
+  rec.continuous = true; rec.interimResults = false; rec.lang = 'en-US';
+  let listening = false;
+  rec.onresult = (e) => {
+    let t = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0].transcript;
+    const ta = $('capture-text');
+    ta.value = (ta.value ? ta.value.trim() + ' ' : '') + t.trim();
+  };
+  rec.onend = () => { listening = false; micBtn.textContent = '🎤 Dictate'; micBtn.classList.remove('rec'); };
+  rec.onerror = () => { listening = false; micBtn.textContent = '🎤 Dictate'; micBtn.classList.remove('rec'); };
+  micBtn.addEventListener('click', () => {
+    if (listening) { rec.stop(); return; }
+    try { rec.start(); listening = true; micBtn.textContent = '⏹ Stop'; micBtn.classList.add('rec'); }
+    catch (_) { /* ignore double-starts */ }
+  });
+})();
 
 /* ================= Dialog / save / delete ================= */
 $('add-btn').addEventListener('click', () => openDialog(null));
