@@ -129,6 +129,7 @@
     margin-top: 10px; max-height: 160px; overflow: auto;
     border: 1px solid var(--line); border-radius: 8px; background: #fafafa; padding: 8px 10px;
   }
+  .ro-field { padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: #f7f8fa; color: #374151; }
   .act-line { font-size: 12px; color: #374151; padding: 3px 0; border-bottom: 1px solid #eee; }
   .act-line:last-child { border-bottom: none; }
   .muted-note { color: var(--muted); font-size: 12px; }
@@ -251,6 +252,8 @@
         <button type="button" class="vt active" id="view-cards">Cards</button>
         <button type="button" class="vt" id="view-table">Table</button>
       </div>
+      <label class="count" for="code-filter">Code:</label>
+      <select id="code-filter"><option value="">All codes</option></select>
       <label class="count" for="stage-filter">Show:</label>
       <select id="stage-filter"><option value="">All stages</option></select>
       <span class="count" id="lead-count"></span>
@@ -271,7 +274,6 @@
           <div class="field"><label>Address</label><input name="address" required></div>
           <div class="field"><label>Floor</label><input name="floor"></div>
           <div class="field"><label>Location code</label><input name="location_code" inputmode="numeric" placeholder="e.g. 362"></div>
-          <div class="field"><label>Zone</label><input name="zone"></div>
         </div>
       </fieldset>
 
@@ -298,16 +300,18 @@
         </div>
       </fieldset>
 
+      <div class="field"><label>Notes</label><textarea name="notes" rows="4"></textarea></div>
+
       <fieldset>
         <legend>Pop-in tracking</legend>
         <div class="grid2">
-          <div class="field"><label>Last pop-in date</label><input name="last_popin_date" type="date"></div>
-          <div class="field"><label>Pop-in count</label><input name="popin_count" inputmode="numeric"></div>
+          <div class="field"><label>Last pop-in</label><div id="popin-last" class="ro-field"></div></div>
+          <div class="field"><label>Pop-in count</label><div id="popin-count-view" class="ro-field"></div></div>
         </div>
-        <div class="field"><label>Pop-in log</label><textarea name="popin_log" rows="3"></textarea></div>
+        <div class="field"><label>Log a pop-in (saved with today's date &amp; time; bumps the count)</label>
+          <textarea id="popin-text" rows="2" placeholder="e.g. Stopped by — receptionist said decision maker is out, try again in 2 weeks"></textarea></div>
+        <div id="popin-view" class="activity-view"></div>
       </fieldset>
-
-      <div class="field"><label>Notes</label><textarea name="notes" rows="4"></textarea></div>
 
       <fieldset>
         <legend>Activity log</legend>
@@ -433,13 +437,23 @@ async function loadLeads() {
     .order('location_code', { ascending: true, nullsFirst: false });
   if (error) { container.innerHTML = '<div class="empty">Could not load leads: ' + esc(error.message) + '</div>'; return; }
   leads = data || [];
+  populateCodeFilter();
   render();
+}
+
+// Fill the Code dropdown with the distinct location codes currently in use.
+function populateCodeFilter() {
+  const sel = $('code-filter');
+  const cur = sel.value;
+  const codes = [...new Set(leads.map(l => l.location_code).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">All codes</option>' +
+    codes.map(c => '<option' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
 }
 
 // Does a lead match the current search text?
 function leadMatches(l, q) {
   const hay = [l.tenant_name, l.contact_name, l.address, l.floor, l.rsf, l.phone,
-    l.email, l.notes, l.stage, l.location_code, l.zone, l.owner]
+    l.email, l.notes, l.stage, l.location_code, l.owner]
     .map(v => v == null ? '' : String(v)).join(' ').toLowerCase();
   return hay.includes(q);
 }
@@ -447,8 +461,10 @@ function leadMatches(l, q) {
 function render() {
   const filter = $('stage-filter').value;
   const q = searchText.trim().toLowerCase();
+  const codeF = $('code-filter').value;
   let shown = leads;
   if (filter) shown = shown.filter(l => (l.stage || '') === filter);
+  if (codeF) shown = shown.filter(l => (l.location_code || '') === codeF);
   if (q) shown = shown.filter(l => leadMatches(l, q));
   $('lead-count').textContent = shown.length + (shown.length === 1 ? ' lead' : ' leads');
   if (view === 'table') renderTable(shown);
@@ -589,6 +605,7 @@ function leadCard(l) {
 }
 
 $('stage-filter').addEventListener('change', render);
+$('code-filter').addEventListener('change', render);
 
 /* ================= Quick capture ================= */
 $('parse-btn').addEventListener('click', async () => {
@@ -671,7 +688,7 @@ async function applyPopIn(lead, fields, note) {
   const payload = {
     popin_count: (Number(lead.popin_count) || 0) + 1,
     last_popin_date: today,
-    popin_log: (lead.popin_log ? lead.popin_log.trim() + '\n' : '') + today + ': ' + note,
+    popin_log: stamp() + ': ' + note + (lead.popin_log ? '\n' + lead.popin_log.trim() : ''),
   };
   const fillable = ['floor', 'tenant_name', 'rsf', 'contact_name', 'lease_expiration',
     'email', 'phone', 'next_followup', 'location_code', 'notes'];
@@ -705,8 +722,12 @@ function prefillAndOpen(fields) {
   const code = computeLocationCode(form.elements['address'].value);
   if (code && !form.elements['location_code'].value) form.elements['location_code'].value = code;
   $('update-text').value = '';
+  $('popin-text').value = '';
   originalStage = null;
-  renderActivity('');
+  renderLogEl($('activity-view'), '', 'No updates logged yet.');
+  $('popin-last').textContent = '—';
+  $('popin-count-view').textContent = '0';
+  renderLogEl($('popin-view'), '', 'No pop-ins logged yet.');
   $('delete-btn').style.display = 'none';
   dialog.showModal();
 }
@@ -742,6 +763,7 @@ function openDialog(id) {
   editingId = id;
   form.reset();
   $('update-text').value = '';
+  $('popin-text').value = '';
   const del = $('delete-btn');
   if (id) {
     const l = leads.find(x => String(x.id) === String(id));
@@ -752,14 +774,20 @@ function openDialog(id) {
     // An existing code counts as user-set, so typing the address won't overwrite it.
     form.elements['location_code'].dataset.touched = l.location_code ? '1' : '';
     originalStage = l.stage;
-    renderActivity(l.activity_log);
+    renderLogEl($('activity-view'), l.activity_log, 'No updates logged yet.');
+    $('popin-last').textContent = l.last_popin_date || '—';
+    $('popin-count-view').textContent = (Number(l.popin_count) || 0);
+    renderLogEl($('popin-view'), l.popin_log, 'No pop-ins logged yet.');
     del.style.display = 'inline-flex';
   } else {
     $('dlg-title').textContent = 'Add lead';
     form.elements['stage'].value = STAGES[0];
     form.elements['location_code'].dataset.touched = '';
     originalStage = null;
-    renderActivity('');
+    renderLogEl($('activity-view'), '', 'No updates logged yet.');
+    $('popin-last').textContent = '—';
+    $('popin-count-view').textContent = '0';
+    renderLogEl($('popin-view'), '', 'No pop-ins logged yet.');
     del.style.display = 'none';
   }
   dialog.showModal();
@@ -789,6 +817,16 @@ form.addEventListener('submit', async (e) => {
       ? (leads.find(l => String(l.id) === String(editingId))?.activity_log || '')
       : '';
     payload.activity_log = additions.join('\n') + (existing ? '\n' + existing : '');
+  }
+
+  // Log a pop-in (timestamped, newest first) — bumps the count and sets today's date.
+  const popNote = $('popin-text').value.trim();
+  if (popNote) {
+    const cur = editingId ? (leads.find(l => String(l.id) === String(editingId)) || {}) : {};
+    const existingLog = cur.popin_log || '';
+    payload.popin_log = stamp() + ': ' + popNote + (existingLog ? '\n' + existingLog.trim() : '');
+    payload.popin_count = (Number(cur.popin_count) || 0) + 1;
+    payload.last_popin_date = new Date().toISOString().slice(0, 10);
   }
 
   $('save-btn').disabled = true;
@@ -843,11 +881,10 @@ function stamp() {
   });
 }
 
-// Show a lead's activity log (newest first) inside the edit dialog.
-function renderActivity(log) {
-  const view = $('activity-view');
-  if (!log) { view.innerHTML = '<span class="muted-note">No updates logged yet.</span>'; return; }
-  view.innerHTML = log.split('\n').filter(Boolean)
+// Render a timestamped log (newest first) into an element.
+function renderLogEl(el, log, emptyMsg) {
+  if (!log) { el.innerHTML = '<span class="muted-note">' + esc(emptyMsg || 'Nothing logged yet.') + '</span>'; return; }
+  el.innerHTML = log.split('\n').filter(Boolean)
     .map(line => '<div class="act-line">' + esc(line) + '</div>').join('');
 }
 
