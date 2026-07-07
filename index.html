@@ -87,6 +87,7 @@
   header.topbar .btn.secondary:hover { background: rgba(255,255,255,.24); }
 
   .wrap { max-width: 1040px; margin: 0 auto; padding: 20px; }
+  .wrap.wide { max-width: none; }   /* full page width in Table view */
   .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 18px; }
   .toolbar .grow { flex: 1; }
   .toolbar select { padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
@@ -545,6 +546,7 @@ function setView(v) {
   view = v;
   $('view-cards').classList.toggle('active', v === 'cards');
   $('view-table').classList.toggle('active', v === 'table');
+  document.querySelector('.wrap').classList.toggle('wide', v === 'table');
   render();
 }
 $('view-cards').addEventListener('click', () => setView('cards'));
