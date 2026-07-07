@@ -119,6 +119,51 @@
   .cand-s { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
   .cand-go { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--accent); font-weight: 600; }
 
+  /* ---------- Stage select on card + activity log ---------- */
+  .card-stage {
+    padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: 12px; background: #fff; max-width: 190px;
+  }
+  .activity-view {
+    margin-top: 10px; max-height: 160px; overflow: auto;
+    border: 1px solid var(--line); border-radius: 8px; background: #fafafa; padding: 8px 10px;
+  }
+  .act-line { font-size: 12px; color: #374151; padding: 3px 0; border-bottom: 1px solid #eee; }
+  .act-line:last-child { border-bottom: none; }
+  .muted-note { color: var(--muted); font-size: 12px; }
+
+  /* ---------- Search + view toggle ---------- */
+  .search {
+    padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px;
+    background: #fff; min-width: 220px; flex: 0 1 320px;
+  }
+  .search:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  .viewtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .vt { background: #fff; border: none; padding: 8px 14px; font-size: 13px; color: var(--muted); }
+  .vt.active { background: var(--brand); color: #fff; }
+
+  /* ---------- Spreadsheet (table) view ---------- */
+  .table-wrap {
+    overflow-x: auto; border: 1px solid var(--line); border-radius: 12px;
+    background: #fff; box-shadow: var(--shadow);
+  }
+  table.grid { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.grid th, table.grid td {
+    padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap;
+  }
+  table.grid th {
+    position: sticky; top: 0; background: #eef1f5; cursor: pointer; user-select: none;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); z-index: 1;
+  }
+  table.grid th:hover { background: #e4e9f0; }
+  table.grid tbody tr { cursor: pointer; }
+  table.grid tbody tr:hover { background: #f3f7fc; }
+  table.grid td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.grid td.notes-cell { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+  table.grid td.stage-cell { padding: 4px 6px; }
+  table.grid td.stage-cell .card-stage { max-width: 175px; }
+  table.grid td.empty { text-align: center; color: var(--muted); white-space: normal; }
+
   .stage-group { margin-bottom: 26px; }
   .stage-head {
     display: flex; align-items: center; gap: 10px; margin: 0 0 10px;
@@ -199,7 +244,12 @@
 
     <div class="toolbar">
       <button class="btn" id="add-btn">+ Add lead</button>
+      <input id="search" class="search" type="search" placeholder="Search company, contact, address, notes…">
       <div class="grow"></div>
+      <div class="viewtoggle">
+        <button type="button" class="vt active" id="view-cards">Cards</button>
+        <button type="button" class="vt" id="view-table">Table</button>
+      </div>
       <label class="count" for="stage-filter">Show:</label>
       <select id="stage-filter"><option value="">All stages</option></select>
       <span class="count" id="lead-count"></span>
@@ -257,6 +307,13 @@
       </fieldset>
 
       <div class="field"><label>Notes</label><textarea name="notes" rows="4"></textarea></div>
+
+      <fieldset>
+        <legend>Activity log</legend>
+        <div class="field"><label>Add an update (saved with today's date &amp; time)</label>
+          <textarea id="update-text" rows="2" placeholder="e.g. Left voicemail; sending survey Monday"></textarea></div>
+        <div id="activity-view" class="activity-view"></div>
+      </fieldset>
     </div>
     <div class="dlg-foot">
       <button type="button" class="btn danger" id="delete-btn" style="margin-right:auto; display:none;">Delete</button>
@@ -310,6 +367,10 @@ const loginView = $('login-view'), appView = $('app-view');
 const dialog = $('lead-dialog'), form = $('lead-form');
 let leads = [];
 let editingId = null;
+let originalStage = null;   // remembers a lead's stage when the edit form opens, to log changes
+let view = 'cards';         // 'cards' or 'table'
+let sortKey = null, sortDir = 1;   // table sorting
+let searchText = '';
 
 /* ================= Boot ================= */
 init();
@@ -374,18 +435,32 @@ async function loadLeads() {
   render();
 }
 
+// Does a lead match the current search text?
+function leadMatches(l, q) {
+  const hay = [l.tenant_name, l.contact_name, l.address, l.floor, l.rsf, l.phone,
+    l.email, l.notes, l.stage, l.location_code, l.zone, l.owner]
+    .map(v => v == null ? '' : String(v)).join(' ').toLowerCase();
+  return hay.includes(q);
+}
+
 function render() {
+  const filter = $('stage-filter').value;
+  const q = searchText.trim().toLowerCase();
+  let shown = leads;
+  if (filter) shown = shown.filter(l => (l.stage || '') === filter);
+  if (q) shown = shown.filter(l => leadMatches(l, q));
+  $('lead-count').textContent = shown.length + (shown.length === 1 ? ' lead' : ' leads');
+  if (view === 'table') renderTable(shown);
+  else renderCards(shown);
+}
+
+function renderCards(shown) {
   const container = $('leads-container');
   const filter = $('stage-filter').value;
-  const shown = filter ? leads.filter(l => l.stage === filter) : leads;
-  $('lead-count').textContent = shown.length + (shown.length === 1 ? ' lead' : ' leads');
-
   if (!shown.length) {
-    container.innerHTML = '<div class="empty">No leads yet. Click <b>+ Add lead</b> to create your first one.</div>';
+    container.innerHTML = '<div class="empty">No leads match. Try clearing the search or the stage filter.</div>';
     return;
   }
-
-  // Group by stage, in pipeline order.
   const order = filter ? [filter] : STAGES.concat(['(No stage)']);
   let html = '';
   order.forEach(stage => {
@@ -397,9 +472,94 @@ function render() {
     html += '</div></div>';
   });
   container.innerHTML = html;
-
   container.querySelectorAll('[data-edit]').forEach(btn =>
     btn.addEventListener('click', () => openDialog(btn.getAttribute('data-edit'))));
+  container.querySelectorAll('.card-stage').forEach(sel =>
+    sel.addEventListener('change', () => changeStage(sel.getAttribute('data-id'), sel.value)));
+}
+
+// Airtable-style spreadsheet grid: sortable columns, inline stage, click a row to edit.
+const TABLE_COLS = [
+  ['tenant_name', 'Company'], ['contact_name', 'Contact'], ['address', 'Address'],
+  ['floor', 'Floor'], ['rsf', 'RSF'], ['phone', 'Phone'], ['email', 'Email'],
+  ['lease_expiration', 'Lease exp.'], ['next_followup', 'Follow-up'],
+  ['stage', 'Stage'], ['location_code', 'Code'], ['notes', 'Notes'],
+];
+
+function renderTable(shown) {
+  const container = $('leads-container');
+  let data = shown.slice();
+  if (sortKey) {
+    data.sort((a, b) => {
+      if (sortKey === 'rsf') return ((Number(a.rsf) || 0) - (Number(b.rsf) || 0)) * sortDir;
+      const x = (a[sortKey] == null ? '' : String(a[sortKey])).toLowerCase();
+      const y = (b[sortKey] == null ? '' : String(b[sortKey])).toLowerCase();
+      return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
+    });
+  }
+  let html = '<div class="table-wrap"><table class="grid"><thead><tr>';
+  TABLE_COLS.forEach(([k, label]) => {
+    const arrow = sortKey === k ? (sortDir === 1 ? ' ▲' : ' ▼') : '';
+    html += '<th data-sort="' + k + '">' + esc(label) + arrow + '</th>';
+  });
+  html += '</tr></thead><tbody>';
+  if (!data.length) {
+    html += '<tr><td class="empty" colspan="' + TABLE_COLS.length + '">No leads match. Try clearing the search or the stage filter.</td></tr>';
+  }
+  data.forEach(l => {
+    html += '<tr data-edit="' + l.id + '">';
+    TABLE_COLS.forEach(([k]) => {
+      if (k === 'stage') {
+        const opts = STAGES.map(s => '<option' + (s === l.stage ? ' selected' : '') + '>' + esc(s) + '</option>').join('') +
+          (STAGES.includes(l.stage) ? '' : '<option selected>' + esc(l.stage || '(No stage)') + '</option>');
+        html += '<td class="stage-cell"><select class="card-stage" data-id="' + l.id + '">' + opts + '</select></td>';
+      } else if (k === 'rsf') {
+        html += '<td class="num">' + (l.rsf ? Number(l.rsf).toLocaleString() : '') + '</td>';
+      } else if (k === 'notes') {
+        html += '<td class="notes-cell" title="' + esc(l.notes || '') + '">' + esc(l.notes || '') + '</td>';
+      } else {
+        html += '<td>' + esc(l[k] == null ? '' : l[k]) + '</td>';
+      }
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+
+  container.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
+    const k = th.getAttribute('data-sort');
+    if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = 1; }
+    render();
+  }));
+  container.querySelectorAll('.card-stage').forEach(sel => {
+    sel.addEventListener('click', e => e.stopPropagation());
+    sel.addEventListener('change', () => changeStage(sel.getAttribute('data-id'), sel.value));
+  });
+  container.querySelectorAll('tr[data-edit]').forEach(tr => tr.addEventListener('click', (e) => {
+    if (e.target.closest('.stage-cell')) return;
+    openDialog(tr.getAttribute('data-edit'));
+  }));
+}
+
+function setView(v) {
+  view = v;
+  $('view-cards').classList.toggle('active', v === 'cards');
+  $('view-table').classList.toggle('active', v === 'table');
+  render();
+}
+$('view-cards').addEventListener('click', () => setView('cards'));
+$('view-table').addEventListener('click', () => setView('table'));
+$('search').addEventListener('input', () => { searchText = $('search').value; render(); });
+
+// Change a lead's stage straight from its card, logging a timestamped entry.
+async function changeStage(id, newStage) {
+  const lead = leads.find(l => String(l.id) === String(id));
+  if (!lead || lead.stage === newStage) return;
+  const entry = stamp() + ': Stage → ' + newStage;
+  const activity_log = entry + (lead.activity_log ? '\n' + lead.activity_log : '');
+  const { error } = await sb.from('leads').update({ stage: newStage, activity_log }).eq('id', id);
+  if (error) { alert('Could not change stage: ' + error.message); return; }
+  loadLeads();
 }
 
 function leadCard(l) {
@@ -412,12 +572,17 @@ function leadCard(l) {
   if (l.owner) line.push(['Owner', l.owner]);
   const meta = line.map(([k,v]) => '<div class="k">' + esc(k) + '</div><div>' + esc(v) + '</div>').join('');
   const addr = [l.address, l.floor ? 'Fl ' + l.floor : ''].filter(Boolean).join(' · ');
+  const opts = STAGES.map(s => '<option' + (s === l.stage ? ' selected' : '') + '>' + esc(s) + '</option>').join('') +
+    (STAGES.includes(l.stage) ? '' : '<option selected>' + esc(l.stage || '(No stage)') + '</option>');
   return '<div class="lead">' +
     (l.location_code ? '<span class="badge-code">' + esc(l.location_code) + '</span> ' : '') +
     '<span class="tenant">' + esc(l.tenant_name || '(unnamed tenant)') + '</span>' +
     '<div class="addr">' + esc(addr || '—') + '</div>' +
     (meta ? '<div class="meta">' + meta + '</div>' : '') +
-    '<div class="row-actions"><button class="btn secondary" data-edit="' + l.id + '">Edit</button></div>' +
+    '<div class="row-actions">' +
+      '<select class="card-stage" data-id="' + l.id + '">' + opts + '</select>' +
+      '<button class="btn secondary" data-edit="' + l.id + '">Edit</button>' +
+    '</div>' +
     '</div>';
 }
 
@@ -537,6 +702,9 @@ function prefillAndOpen(fields) {
   }
   const code = computeLocationCode(form.elements['address'].value);
   if (code && !form.elements['location_code'].value) form.elements['location_code'].value = code;
+  $('update-text').value = '';
+  originalStage = null;
+  renderActivity('');
   $('delete-btn').style.display = 'none';
   dialog.showModal();
 }
@@ -571,6 +739,7 @@ $('cancel-btn').addEventListener('click', () => dialog.close());
 function openDialog(id) {
   editingId = id;
   form.reset();
+  $('update-text').value = '';
   const del = $('delete-btn');
   if (id) {
     const l = leads.find(x => String(x.id) === String(id));
@@ -580,11 +749,15 @@ function openDialog(id) {
     }
     // An existing code counts as user-set, so typing the address won't overwrite it.
     form.elements['location_code'].dataset.touched = l.location_code ? '1' : '';
+    originalStage = l.stage;
+    renderActivity(l.activity_log);
     del.style.display = 'inline-flex';
   } else {
     $('dlg-title').textContent = 'Add lead';
     form.elements['stage'].value = STAGES[0];
     form.elements['location_code'].dataset.touched = '';
+    originalStage = null;
+    renderActivity('');
     del.style.display = 'none';
   }
   dialog.showModal();
@@ -601,6 +774,21 @@ form.addEventListener('submit', async (e) => {
     else if (NUMERIC.includes(el.name)) v = Number(v);
     payload[el.name] = v;
   }
+
+  // Build any timestamped activity-log entries (a typed update and/or a stage change).
+  const additions = [];
+  const upd = $('update-text').value.trim();
+  if (upd) additions.push(stamp() + ': ' + upd);
+  if (editingId && originalStage != null && payload.stage !== originalStage) {
+    additions.push(stamp() + ': Stage → ' + payload.stage);
+  }
+  if (additions.length) {
+    const existing = editingId
+      ? (leads.find(l => String(l.id) === String(editingId))?.activity_log || '')
+      : '';
+    payload.activity_log = additions.join('\n') + (existing ? '\n' + existing : '');
+  }
+
   $('save-btn').disabled = true;
   let error;
   if (editingId) ({ error } = await sb.from('leads').update(payload).eq('id', editingId));
@@ -646,6 +834,21 @@ function extractCrossStreet(address) {
 }
 
 /* ================= Utils ================= */
+// A readable local timestamp, e.g. "Jul 5, 2026, 3:42 PM".
+function stamp() {
+  return new Date().toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  });
+}
+
+// Show a lead's activity log (newest first) inside the edit dialog.
+function renderActivity(log) {
+  const view = $('activity-view');
+  if (!log) { view.innerHTML = '<span class="muted-note">No updates logged yet.</span>'; return; }
+  view.innerHTML = log.split('\n').filter(Boolean)
+    .map(line => '<div class="act-line">' + esc(line) + '</div>').join('');
+}
+
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c =>
     ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
