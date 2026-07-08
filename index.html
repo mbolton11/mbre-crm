@@ -412,16 +412,18 @@
       <fieldset>
         <legend>Building</legend>
         <div class="grid2">
-          <div class="field"><label>Building name</label><input name="building_name"></div>
           <div class="field"><label>Address</label><input name="address" required></div>
           <div class="field"><label>Location code</label><input name="location_code" inputmode="numeric"></div>
           <div class="field"><label>Floors</label><input name="floors" inputmode="numeric"></div>
           <div class="field"><label>Landlord</label><input name="landlord"></div>
+          <div class="field"><label>Asking rent ($/RSF)</label><input name="asking_rent" inputmode="decimal" placeholder="e.g. 65.00"></div>
           <div class="field"><label>Canvass status</label>
             <select name="canvass_status"><option value="">—</option><option>To Canvass</option><option>Canvassed</option><option>Revisit</option></select>
           </div>
           <div class="field"><label>Last canvassed</label><input name="last_canvassed" type="date"></div>
         </div>
+        <div class="field"><label>Access (a confirmed tenant + floor to name at the front desk)</label>
+          <input name="access" placeholder="e.g. Here to see Acme Corp on the 14th floor"></div>
       </fieldset>
       <div class="field"><label>Notes</label><textarea name="notes" rows="3"></textarea></div>
       <fieldset>
@@ -761,7 +763,7 @@ function setView(v) {
   view = v;
   ['cards', 'table', 'map', 'buildings'].forEach(x => $('view-' + x).classList.toggle('active', v === x));
   const w = document.querySelector('.wrap');
-  w.classList.toggle('wide', v === 'table' || v === 'map');
+  w.classList.toggle('wide', v === 'table' || v === 'map' || v === 'buildings');
   w.classList.toggle('buildings', v === 'buildings');
   render();
 }
@@ -824,15 +826,29 @@ async function geocode(address) {
 }
 
 /* ================= Buildings ================= */
+const BLDG_COLS = [
+  ['address', 'Address'], ['location_code', 'Code'], ['floors', 'Floors'],
+  ['__leads', 'Leads'], ['canvass_status', 'Status'], ['last_canvassed', 'Last canvassed'],
+  ['landlord', 'Landlord'], ['asking_rent', 'Asking rent'], ['access', 'Access'], ['notes', 'Notes'],
+];
+let bldgSortKey = null, bldgSortDir = 1;
+
 function renderBuildings() {
   const container = $('leads-container');
   const statusF = $('bldg-status-filter').value;
   const counts = {};
   leads.forEach(l => { if (l.building_id != null) counts[l.building_id] = (counts[l.building_id] || 0) + 1; });
-  let list = buildings.slice().sort((a, b) =>
-    String(a.location_code || 'zzz').localeCompare(String(b.location_code || 'zzz')) ||
-    String(a.building_name || a.address || '').localeCompare(String(b.building_name || b.address || '')));
+
+  let list = buildings.slice();
   if (statusF) list = list.filter(b => (b.canvass_status || 'To Canvass') === statusF);
+  const key = bldgSortKey || 'location_code';
+  list.sort((a, b) => {
+    if (key === '__leads') return ((counts[a.id] || 0) - (counts[b.id] || 0)) * bldgSortDir;
+    if (key === 'floors' || key === 'asking_rent') return ((Number(a[key]) || 0) - (Number(b[key]) || 0)) * bldgSortDir;
+    const x = (a[key] == null ? '' : String(a[key])).toLowerCase();
+    const y = (b[key] == null ? '' : String(b[key])).toLowerCase();
+    return (x < y ? -1 : x > y ? 1 : 0) * bldgSortDir;
+  });
   $('bldg-count').textContent = list.length + (list.length === 1 ? ' building' : ' buildings');
 
   if (!buildings.length) {
@@ -844,37 +860,57 @@ function renderBuildings() {
     updateCanvassBtn(); return;
   }
 
-  let html = '<div class="cards">';
-  list.forEach(b => {
-    const n = counts[b.id] || 0;
-    const status = b.canvass_status || 'To Canvass';
-    html += '<div class="lead" data-bldg="' + b.id + '">' +
-      '<input type="checkbox" class="bldg-check" data-bldg="' + b.id + '"' + (selectedBldgs.has(String(b.id)) ? ' checked' : '') + '>' +
-      (b.location_code ? '<span class="badge-code">' + esc(b.location_code) + '</span> ' : '') +
-      '<span class="tenant">' + esc(b.building_name || b.address || '(building)') + '</span>' +
-      '<div class="addr">' + esc(b.address || '') + '</div>' +
-      '<div class="meta">' +
-        '<div class="k">Leads</div><div>' + n + '</div>' +
-        '<div class="k">Status</div><div>' + esc(status) + '</div>' +
-        (b.landlord ? '<div class="k">Landlord</div><div>' + esc(b.landlord) + '</div>' : '') +
-        (b.last_canvassed ? '<div class="k">Canvassed</div><div>' + esc(fmtDate(b.last_canvassed)) + '</div>' : '') +
-      '</div>' +
-      '<div class="row-actions"><span class="btn secondary">Open →</span></div>' +
-      '</div>';
+  let html = '<div class="table-wrap"><table class="grid"><thead><tr>';
+  html += '<th class="chk-col"><input type="checkbox" id="bchk-all" title="Check/uncheck all shown"></th>';
+  BLDG_COLS.forEach(([k, label]) => {
+    const arrow = bldgSortKey === k ? (bldgSortDir === 1 ? ' ▲' : ' ▼') : '';
+    html += '<th data-bsort="' + k + '">' + esc(label) + arrow + '</th>';
   });
-  html += '</div>';
+  html += '</tr></thead><tbody>';
+  list.forEach(b => {
+    html += '<tr data-bldg="' + b.id + '">';
+    html += '<td class="chk-col"><input type="checkbox" class="bldg-check" data-bldg="' + b.id + '"' +
+            (selectedBldgs.has(String(b.id)) ? ' checked' : '') + '></td>';
+    BLDG_COLS.forEach(([k]) => {
+      if (k === '__leads') html += '<td class="num">' + (counts[b.id] || 0) + '</td>';
+      else if (k === 'address') html += '<td><b>' + esc(b.address || '') + '</b></td>';
+      else if (k === 'canvass_status') html += '<td>' + esc(b.canvass_status || 'To Canvass') + '</td>';
+      else if (k === 'last_canvassed') html += '<td>' + esc(fmtDate(b.last_canvassed)) + '</td>';
+      else if (k === 'asking_rent') html += '<td class="num">' + esc(fmtRent(b.asking_rent)) + '</td>';
+      else if (k === 'notes' || k === 'access') html += '<td class="notes-cell" title="' + esc(b[k] || '') + '">' + esc(b[k] || '') + '</td>';
+      else html += '<td>' + esc(b[k] == null ? '' : b[k]) + '</td>';
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
   container.innerHTML = html;
 
-  container.querySelectorAll('.lead[data-bldg]').forEach(el =>
-    el.addEventListener('click', () => openBuilding(el.getAttribute('data-bldg'))));
+  container.querySelectorAll('th[data-bsort]').forEach(th => th.addEventListener('click', () => {
+    const k = th.getAttribute('data-bsort');
+    if (bldgSortKey === k) bldgSortDir = -bldgSortDir; else { bldgSortKey = k; bldgSortDir = 1; }
+    renderBuildings();
+  }));
+  container.querySelectorAll('tr[data-bldg]').forEach(tr => tr.addEventListener('click', (e) => {
+    if (e.target.closest('.chk-col')) return;
+    openBuilding(tr.getAttribute('data-bldg'));
+  }));
+  const syncAll = () => { const ab = $('bchk-all'); if (ab) ab.checked = list.length > 0 && list.every(b => selectedBldgs.has(String(b.id))); };
   container.querySelectorAll('.bldg-check').forEach(cb => {
     cb.addEventListener('click', e => e.stopPropagation());
     cb.addEventListener('change', () => {
       const id = String(cb.getAttribute('data-bldg'));
       if (cb.checked) selectedBldgs.add(id); else selectedBldgs.delete(id);
-      updateCanvassBtn();
+      syncAll(); updateCanvassBtn();
     });
   });
+  const allBox = $('bchk-all');
+  if (allBox) {
+    syncAll();
+    allBox.addEventListener('change', () => {
+      list.forEach(b => { if (allBox.checked) selectedBldgs.add(String(b.id)); else selectedBldgs.delete(String(b.id)); });
+      updateCanvassBtn(); renderBuildings();
+    });
+  }
   updateCanvassBtn();
 }
 
@@ -905,9 +941,10 @@ function doPrintCanvass() {
     if (b.floors) meta.push(b.floors + ' floors');
     meta.push(b.canvass_status || 'To Canvass');
     if (b.landlord) meta.push('LL: ' + b.landlord);
+    if (b.asking_rent != null && b.asking_rent !== '') meta.push('Rent: ' + fmtRent(b.asking_rent) + '/RSF');
     html += '<div class="pitem"><div class="pline1"><span class="pbox"></span> <b>' +
-      esc(b.building_name || b.address || '(building)') + '</b> — ' + esc(b.address || '') +
-      '  <i>(' + esc(meta.join(' · ')) + ')</i></div>';
+      esc(b.address || '(building)') + '</b>  <i>(' + esc(meta.join(' · ')) + ')</i></div>';
+    if (b.access) html += '<div class="pline"><b>Access:</b> ' + esc(b.access) + '</div>';
     if (b.notes) html += '<div class="pline">' + esc(b.notes) + '</div>';
     const inb = leads.filter(l => String(l.building_id) === String(b.id))
       .sort((x, y) => String(x.floor || '').localeCompare(String(y.floor || ''), undefined, { numeric: true }));
@@ -940,7 +977,7 @@ function openBuilding(id) {
   const del = $('bldg-delete-btn');
   if (id) {
     const b = buildings.find(x => String(x.id) === String(id));
-    $('bldg-title').textContent = b.building_name || b.address || 'Building';
+    $('bldg-title').textContent = b.address || 'Building';
     for (const el of bform.elements) { if (el.name && b[el.name] != null) el.value = b[el.name]; }
     del.style.display = 'inline-flex';
   } else {
@@ -978,6 +1015,7 @@ $('building-form').addEventListener('submit', async (e) => {
     let v = el.value;
     if (v === '') v = null;
     else if (el.name === 'floors') v = Number(v);
+    else if (el.name === 'asking_rent') v = Number(String(v).replace(/[^0-9.]/g, ''));
     payload[el.name] = v;
   }
   $('bldg-save-btn').disabled = true;
@@ -1346,6 +1384,13 @@ function fmtDate(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) return iso || '';
   const [y, m, d] = iso.split('-');
   return m + '/' + d + '/' + y;
+}
+
+// Format asking rent as $00.00.
+function fmtRent(v) {
+  if (v == null || v === '') return '';
+  const n = Number(v);
+  return isNaN(n) ? '' : '$' + n.toFixed(2);
 }
 
 // Whole days from today until a date (negative = overdue).
