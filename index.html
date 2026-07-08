@@ -169,6 +169,19 @@
   table.grid th.chk-col, table.grid td.chk-col { width: 34px; text-align: center; padding: 6px; }
   table.grid td.chk-col input, table.grid th.chk-col input { width: 16px; height: 16px; cursor: pointer; }
 
+  /* ---------- Buildings view ---------- */
+  .buildings-only { display: none; }
+  .wrap.buildings .lead-only { display: none !important; }
+  .wrap.buildings .buildings-only { display: inline-flex; }
+  .wrap.buildings .capture { display: none; }
+  .bldg-lead {
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    margin-bottom: 6px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 8px;
+  }
+  .bldg-lead:hover { background: #f3f7fc; }
+  .bl-stage { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .lead[data-bldg] { cursor: pointer; }
+
   /* ---------- Map view ---------- */
   #map { height: 72vh; width: 100%; border: 1px solid var(--line); border-radius: 12px; }
   .map-note { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
@@ -269,21 +282,29 @@
     </div>
 
     <div class="toolbar">
-      <button class="btn" id="add-btn">+ Add lead</button>
-      <input id="search" class="search" type="search" placeholder="Search company, contact, address, notes…">
+      <span class="lead-only" style="display:contents">
+        <button class="btn" id="add-btn">+ Add lead</button>
+        <input id="search" class="search" type="search" placeholder="Search company, contact, address, notes…">
+      </span>
+      <button type="button" class="btn buildings-only" id="add-building-btn">+ Add building</button>
       <div class="grow"></div>
-      <button type="button" class="btn" id="print-btn" title="Print the checked leads as a visit list">🖨 Print list (0)</button>
-      <button type="button" class="btn danger" id="delete-selected-btn" title="Delete the checked leads">🗑 Delete (0)</button>
+      <span class="lead-only" style="display:contents">
+        <button type="button" class="btn" id="print-btn" title="Print the checked leads as a visit list">🖨 Print list (0)</button>
+        <button type="button" class="btn danger" id="delete-selected-btn" title="Delete the checked leads">🗑 Delete (0)</button>
+      </span>
       <div class="viewtoggle">
         <button type="button" class="vt active" id="view-cards">Cards</button>
         <button type="button" class="vt" id="view-table">Table</button>
         <button type="button" class="vt" id="view-map">Map</button>
+        <button type="button" class="vt" id="view-buildings">Buildings</button>
       </div>
-      <label class="count" for="code-filter">Code:</label>
-      <select id="code-filter"><option value="">All codes</option></select>
-      <label class="count" for="stage-filter">Show:</label>
-      <select id="stage-filter"><option value="">All stages</option></select>
-      <span class="count" id="lead-count"></span>
+      <span class="lead-only" style="display:contents">
+        <label class="count" for="code-filter">Code:</label>
+        <select id="code-filter"><option value="">All codes</option></select>
+        <label class="count" for="stage-filter">Show:</label>
+        <select id="stage-filter"><option value="">All stages</option></select>
+        <span class="count" id="lead-count"></span>
+      </span>
     </div>
 
     <div id="leads-container"></div>
@@ -368,6 +389,39 @@
   </div>
 </dialog>
 
+<!-- ===================== BUILDING DIALOG ===================== -->
+<dialog id="building-dialog">
+  <form id="building-form" method="dialog">
+    <div class="dlg-head"><h2 id="bldg-title">Building</h2></div>
+    <div class="dlg-body">
+      <fieldset>
+        <legend>Building</legend>
+        <div class="grid2">
+          <div class="field"><label>Building name</label><input name="building_name"></div>
+          <div class="field"><label>Address</label><input name="address" required></div>
+          <div class="field"><label>Location code</label><input name="location_code" inputmode="numeric"></div>
+          <div class="field"><label>Floors</label><input name="floors" inputmode="numeric"></div>
+          <div class="field"><label>Landlord</label><input name="landlord"></div>
+          <div class="field"><label>Canvass status</label>
+            <select name="canvass_status"><option value="">—</option><option>To Canvass</option><option>Canvassed</option><option>Revisit</option></select>
+          </div>
+          <div class="field"><label>Last canvassed</label><input name="last_canvassed" type="date"></div>
+        </div>
+      </fieldset>
+      <div class="field"><label>Notes</label><textarea name="notes" rows="3"></textarea></div>
+      <fieldset>
+        <legend>Tenants / leads in this building</legend>
+        <div id="bldg-leads"></div>
+      </fieldset>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="btn danger" id="bldg-delete-btn" style="margin-right:auto; display:none;">Delete building</button>
+      <button type="button" class="btn secondary" id="bldg-cancel-btn">Cancel</button>
+      <button type="submit" class="btn" id="bldg-save-btn">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- Hidden on screen; filled in and shown only when printing the visit list -->
 <div id="print-area"></div>
 
@@ -409,6 +463,8 @@ let sortKey = null, sortDir = 1;   // table sorting
 let searchText = '';
 const selected = new Set();  // lead ids checked for the print/visit list
 let mapObj = null;           // Leaflet map instance (Map view)
+let buildings = [];          // all buildings
+let editingBuildingId = null;
 
 /* ================= Boot ================= */
 init();
@@ -470,6 +526,11 @@ async function loadLeads() {
     .order('location_code', { ascending: true, nullsFirst: false });
   if (error) { container.innerHTML = '<div class="empty">Could not load leads: ' + esc(error.message) + '</div>'; return; }
   leads = data || [];
+
+  // Load buildings too (ignore error if the table doesn't exist yet)
+  const bres = await sb.from('buildings').select('*').order('location_code', { ascending: true, nullsFirst: false });
+  buildings = bres.error ? [] : (bres.data || []);
+
   populateCodeFilter();
   render();
 }
@@ -503,6 +564,7 @@ function render() {
   if (view !== 'map' && mapObj) { try { mapObj.remove(); } catch (_) {} mapObj = null; }
   if (view === 'table') renderTable(shown);
   else if (view === 'map') renderMap(shown);
+  else if (view === 'buildings') renderBuildings();
   else renderCards(shown);
   updatePrintBtn();
 }
@@ -681,15 +743,16 @@ $('print-btn').addEventListener('click', doPrint);
 
 function setView(v) {
   view = v;
-  $('view-cards').classList.toggle('active', v === 'cards');
-  $('view-table').classList.toggle('active', v === 'table');
-  $('view-map').classList.toggle('active', v === 'map');
-  document.querySelector('.wrap').classList.toggle('wide', v === 'table' || v === 'map');
+  ['cards', 'table', 'map', 'buildings'].forEach(x => $('view-' + x).classList.toggle('active', v === x));
+  const w = document.querySelector('.wrap');
+  w.classList.toggle('wide', v === 'table' || v === 'map');
+  w.classList.toggle('buildings', v === 'buildings');
   render();
 }
 $('view-cards').addEventListener('click', () => setView('cards'));
 $('view-table').addEventListener('click', () => setView('table'));
 $('view-map').addEventListener('click', () => setView('map'));
+$('view-buildings').addEventListener('click', () => setView('buildings'));
 
 // A lead is "due" if its follow-up is overdue or within the next 7 days.
 function isDue(l) {
@@ -743,6 +806,108 @@ async function geocode(address) {
   } catch (_) {}
   return null;
 }
+
+/* ================= Buildings ================= */
+function renderBuildings() {
+  const container = $('leads-container');
+  if (!buildings.length) {
+    container.innerHTML = '<div class="empty">No buildings yet. Click <b>+ Add building</b> to add one to canvass.</div>';
+    return;
+  }
+  const counts = {};
+  leads.forEach(l => { if (l.building_id != null) counts[l.building_id] = (counts[l.building_id] || 0) + 1; });
+  const list = buildings.slice().sort((a, b) =>
+    String(a.location_code || 'zzz').localeCompare(String(b.location_code || 'zzz')) ||
+    String(a.building_name || a.address || '').localeCompare(String(b.building_name || b.address || '')));
+  let html = '<div class="cards">';
+  list.forEach(b => {
+    const n = counts[b.id] || 0;
+    const status = b.canvass_status || 'To Canvass';
+    html += '<div class="lead" data-bldg="' + b.id + '">' +
+      (b.location_code ? '<span class="badge-code">' + esc(b.location_code) + '</span> ' : '') +
+      '<span class="tenant">' + esc(b.building_name || b.address || '(building)') + '</span>' +
+      '<div class="addr">' + esc(b.address || '') + '</div>' +
+      '<div class="meta">' +
+        '<div class="k">Leads</div><div>' + n + '</div>' +
+        '<div class="k">Status</div><div>' + esc(status) + '</div>' +
+        (b.landlord ? '<div class="k">Landlord</div><div>' + esc(b.landlord) + '</div>' : '') +
+        (b.last_canvassed ? '<div class="k">Canvassed</div><div>' + esc(fmtDate(b.last_canvassed)) + '</div>' : '') +
+      '</div>' +
+      '<div class="row-actions"><span class="btn secondary">Open →</span></div>' +
+      '</div>';
+  });
+  html += '</div>';
+  container.innerHTML = html;
+  container.querySelectorAll('.lead[data-bldg]').forEach(el =>
+    el.addEventListener('click', () => openBuilding(el.getAttribute('data-bldg'))));
+}
+
+function openBuilding(id) {
+  editingBuildingId = id;
+  const bform = $('building-form');
+  bform.reset();
+  const del = $('bldg-delete-btn');
+  if (id) {
+    const b = buildings.find(x => String(x.id) === String(id));
+    $('bldg-title').textContent = b.building_name || b.address || 'Building';
+    for (const el of bform.elements) { if (el.name && b[el.name] != null) el.value = b[el.name]; }
+    del.style.display = 'inline-flex';
+  } else {
+    $('bldg-title').textContent = 'Add building';
+    del.style.display = 'none';
+  }
+  renderBuildingLeads(id);
+  $('building-dialog').showModal();
+}
+
+function renderBuildingLeads(bid) {
+  const el = $('bldg-leads');
+  const inb = bid ? leads.filter(l => String(l.building_id) === String(bid)) : [];
+  if (!inb.length) { el.innerHTML = '<span class="muted-note">No leads linked to this building yet.</span>'; return; }
+  inb.sort((a, b) => String(a.floor || '').localeCompare(String(b.floor || ''), undefined, { numeric: true }));
+  el.innerHTML = inb.map(l =>
+    '<div class="bldg-lead" data-edit="' + l.id + '"><b>' + esc(l.tenant_name || '(unnamed tenant)') + '</b>' +
+    (l.floor ? ' — Fl ' + esc(l.floor) : '') +
+    '<span class="bl-stage">' + esc(l.stage || '(no stage)') + '</span></div>').join('');
+  el.querySelectorAll('[data-edit]').forEach(row => row.addEventListener('click', () => {
+    $('building-dialog').close();
+    openDialog(row.getAttribute('data-edit'));
+  }));
+}
+
+$('add-building-btn').addEventListener('click', () => openBuilding(null));
+$('bldg-cancel-btn').addEventListener('click', () => $('building-dialog').close());
+
+$('building-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const bform = $('building-form');
+  const payload = {};
+  for (const el of bform.elements) {
+    if (!el.name) continue;
+    let v = el.value;
+    if (v === '') v = null;
+    else if (el.name === 'floors') v = Number(v);
+    payload[el.name] = v;
+  }
+  $('bldg-save-btn').disabled = true;
+  let error;
+  if (editingBuildingId) ({ error } = await sb.from('buildings').update(payload).eq('id', editingBuildingId));
+  else ({ error } = await sb.from('buildings').insert(payload));
+  $('bldg-save-btn').disabled = false;
+  if (error) { alert('Could not save building: ' + error.message); return; }
+  $('building-dialog').close();
+  loadLeads();
+});
+
+$('bldg-delete-btn').addEventListener('click', async () => {
+  if (!editingBuildingId) return;
+  if (!confirm('Delete this building? Its leads will be unlinked but NOT deleted.')) return;
+  await sb.from('leads').update({ building_id: null }).eq('building_id', editingBuildingId);
+  const { error } = await sb.from('buildings').delete().eq('id', editingBuildingId);
+  if (error) { alert('Could not delete building: ' + error.message); return; }
+  $('building-dialog').close();
+  loadLeads();
+});
 $('search').addEventListener('input', () => { searchText = $('search').value; render(); });
 
 // Change a lead's stage straight from its card, logging a timestamped entry.
@@ -1017,6 +1182,21 @@ form.addEventListener('submit', async (e) => {
     const g = await geocode(payload.address);
     $('save-btn').textContent = 'Save';
     if (g) { payload.lat = g.lat; payload.lng = g.lng; }
+  }
+
+  // Link the lead to a building (match by address; create the building if it's new).
+  if (payload.address) {
+    try {
+      const { data: existing } = await sb.from('buildings').select('id').eq('address', payload.address).limit(1);
+      if (existing && existing.length) {
+        payload.building_id = existing[0].id;
+      } else {
+        const { data: nb } = await sb.from('buildings')
+          .insert({ address: payload.address, location_code: payload.location_code || null, lat: payload.lat ?? null, lng: payload.lng ?? null })
+          .select('id').single();
+        if (nb) payload.building_id = nb.id;
+      }
+    } catch (_) { /* leave building_id unset if it fails */ }
   }
 
   let error;
