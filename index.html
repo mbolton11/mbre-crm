@@ -273,6 +273,7 @@
       <input id="search" class="search" type="search" placeholder="Search company, contact, address, notes…">
       <div class="grow"></div>
       <button type="button" class="btn" id="print-btn" title="Print the checked leads as a visit list">🖨 Print list (0)</button>
+      <button type="button" class="btn danger" id="delete-selected-btn" title="Delete the checked leads">🗑 Delete (0)</button>
       <div class="viewtoggle">
         <button type="button" class="vt active" id="view-cards">Cards</button>
         <button type="button" class="vt" id="view-table">Table</button>
@@ -623,7 +624,23 @@ function renderTable(shown) {
 
 function updatePrintBtn() {
   $('print-btn').textContent = '🖨 Print list (' + selected.size + ')';
+  $('delete-selected-btn').textContent = '🗑 Delete (' + selected.size + ')';
 }
+
+// Delete every checked lead (with confirmation).
+async function doDeleteSelected() {
+  const ids = Array.from(selected);
+  if (!ids.length) {
+    alert('First switch to Table view and tick the checkboxes (left column) for the leads you want to delete.');
+    return;
+  }
+  if (!confirm('Delete ' + ids.length + ' lead' + (ids.length === 1 ? '' : 's') + '? This cannot be undone.')) return;
+  const { error } = await sb.from('leads').delete().in('id', ids);
+  if (error) { alert('Could not delete: ' + error.message); return; }
+  selected.clear();
+  loadLeads();
+}
+$('delete-selected-btn').addEventListener('click', doDeleteSelected);
 
 // Build a printable, block-grouped visit sheet from the checked leads and open the print dialog.
 function doPrint() {
