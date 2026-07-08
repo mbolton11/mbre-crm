@@ -180,7 +180,8 @@
   }
   .bldg-lead:hover { background: #f3f7fc; }
   .bl-stage { margin-left: auto; font-size: 12px; color: var(--muted); }
-  .lead[data-bldg] { cursor: pointer; }
+  .lead[data-bldg] { cursor: pointer; position: relative; }
+  .bldg-check { position: absolute; top: 12px; right: 12px; width: 18px; height: 18px; cursor: pointer; }
 
   /* ---------- Map view ---------- */
   #map { height: 72vh; width: 100%; border: 1px solid var(--line); border-radius: 12px; }
@@ -292,6 +293,10 @@
         <button type="button" class="btn" id="print-btn" title="Print the checked leads as a visit list">🖨 Print list (0)</button>
         <button type="button" class="btn danger" id="delete-selected-btn" title="Delete the checked leads">🗑 Delete (0)</button>
       </span>
+      <span class="buildings-only" style="align-items:center; gap:10px;">
+        <button type="button" class="btn secondary" id="bldg-checkall-btn">Check all shown</button>
+        <button type="button" class="btn" id="print-canvass-btn" title="Print the checked buildings as a canvass list">🖨 Print canvass (0)</button>
+      </span>
       <div class="viewtoggle">
         <button type="button" class="vt active" id="view-cards">Cards</button>
         <button type="button" class="vt" id="view-table">Table</button>
@@ -304,6 +309,16 @@
         <label class="count" for="stage-filter">Show:</label>
         <select id="stage-filter"><option value="">All stages</option></select>
         <span class="count" id="lead-count"></span>
+      </span>
+      <span class="buildings-only" style="align-items:center; gap:8px;">
+        <label class="count" for="bldg-status-filter">Status:</label>
+        <select id="bldg-status-filter">
+          <option value="">All</option>
+          <option>To Canvass</option>
+          <option>Canvassed</option>
+          <option>Revisit</option>
+        </select>
+        <span class="count" id="bldg-count"></span>
       </span>
     </div>
 
@@ -465,6 +480,7 @@ const selected = new Set();  // lead ids checked for the print/visit list
 let mapObj = null;           // Leaflet map instance (Map view)
 let buildings = [];          // all buildings
 let editingBuildingId = null;
+const selectedBldgs = new Set();  // building ids checked for the canvass list
 
 /* ================= Boot ================= */
 init();
@@ -810,20 +826,30 @@ async function geocode(address) {
 /* ================= Buildings ================= */
 function renderBuildings() {
   const container = $('leads-container');
-  if (!buildings.length) {
-    container.innerHTML = '<div class="empty">No buildings yet. Click <b>+ Add building</b> to add one to canvass.</div>';
-    return;
-  }
+  const statusF = $('bldg-status-filter').value;
   const counts = {};
   leads.forEach(l => { if (l.building_id != null) counts[l.building_id] = (counts[l.building_id] || 0) + 1; });
-  const list = buildings.slice().sort((a, b) =>
+  let list = buildings.slice().sort((a, b) =>
     String(a.location_code || 'zzz').localeCompare(String(b.location_code || 'zzz')) ||
     String(a.building_name || a.address || '').localeCompare(String(b.building_name || b.address || '')));
+  if (statusF) list = list.filter(b => (b.canvass_status || 'To Canvass') === statusF);
+  $('bldg-count').textContent = list.length + (list.length === 1 ? ' building' : ' buildings');
+
+  if (!buildings.length) {
+    container.innerHTML = '<div class="empty">No buildings yet. Click <b>+ Add building</b> to add one to canvass.</div>';
+    updateCanvassBtn(); return;
+  }
+  if (!list.length) {
+    container.innerHTML = '<div class="empty">No buildings match that status.</div>';
+    updateCanvassBtn(); return;
+  }
+
   let html = '<div class="cards">';
   list.forEach(b => {
     const n = counts[b.id] || 0;
     const status = b.canvass_status || 'To Canvass';
     html += '<div class="lead" data-bldg="' + b.id + '">' +
+      '<input type="checkbox" class="bldg-check" data-bldg="' + b.id + '"' + (selectedBldgs.has(String(b.id)) ? ' checked' : '') + '>' +
       (b.location_code ? '<span class="badge-code">' + esc(b.location_code) + '</span> ' : '') +
       '<span class="tenant">' + esc(b.building_name || b.address || '(building)') + '</span>' +
       '<div class="addr">' + esc(b.address || '') + '</div>' +
@@ -838,9 +864,74 @@ function renderBuildings() {
   });
   html += '</div>';
   container.innerHTML = html;
+
   container.querySelectorAll('.lead[data-bldg]').forEach(el =>
     el.addEventListener('click', () => openBuilding(el.getAttribute('data-bldg'))));
+  container.querySelectorAll('.bldg-check').forEach(cb => {
+    cb.addEventListener('click', e => e.stopPropagation());
+    cb.addEventListener('change', () => {
+      const id = String(cb.getAttribute('data-bldg'));
+      if (cb.checked) selectedBldgs.add(id); else selectedBldgs.delete(id);
+      updateCanvassBtn();
+    });
+  });
+  updateCanvassBtn();
 }
+
+function updateCanvassBtn() {
+  const el = $('print-canvass-btn');
+  if (el) el.textContent = '🖨 Print canvass (' + selectedBldgs.size + ')';
+}
+
+// Print the checked buildings as a canvass sheet, grouped by block, with each building's tenants/leads.
+function doPrintCanvass() {
+  const chosen = buildings.filter(b => selectedBldgs.has(String(b.id)));
+  if (!chosen.length) {
+    alert('In the Buildings view, tick the buildings you want to canvass, then click Print canvass.');
+    return;
+  }
+  chosen.sort((a, b) =>
+    String(a.location_code || 'zzz').localeCompare(String(b.location_code || 'zzz')) ||
+    String(a.building_name || a.address || '').localeCompare(String(b.building_name || b.address || '')));
+
+  let html = '<h1>Canvassing List</h1>' +
+    '<div class="pmeta">' + chosen.length + ' building' + (chosen.length === 1 ? '' : 's') +
+    ' · printed ' + fmtDate(new Date().toISOString().slice(0, 10)) + '</div>';
+  let curCode = null;
+  chosen.forEach(b => {
+    const code = b.location_code || '—';
+    if (code !== curCode) { curCode = code; html += '<h2>Block ' + esc(code) + '</h2>'; }
+    const meta = [];
+    if (b.floors) meta.push(b.floors + ' floors');
+    meta.push(b.canvass_status || 'To Canvass');
+    if (b.landlord) meta.push('LL: ' + b.landlord);
+    html += '<div class="pitem"><div class="pline1"><span class="pbox"></span> <b>' +
+      esc(b.building_name || b.address || '(building)') + '</b> — ' + esc(b.address || '') +
+      '  <i>(' + esc(meta.join(' · ')) + ')</i></div>';
+    if (b.notes) html += '<div class="pline">' + esc(b.notes) + '</div>';
+    const inb = leads.filter(l => String(l.building_id) === String(b.id))
+      .sort((x, y) => String(x.floor || '').localeCompare(String(y.floor || ''), undefined, { numeric: true }));
+    inb.forEach(l => {
+      const bits = [l.floor ? 'Fl ' + l.floor : '', l.tenant_name || '(unnamed)', l.stage || '', l.phone || '']
+        .filter(Boolean).map(esc).join(' · ');
+      html += '<div class="pline">☐ ' + bits + '</div>';
+    });
+    html += '</div>';
+  });
+
+  $('print-area').innerHTML = html;
+  window.print();
+}
+$('print-canvass-btn').addEventListener('click', doPrintCanvass);
+$('bldg-status-filter').addEventListener('change', renderBuildings);
+$('bldg-checkall-btn').addEventListener('click', () => {
+  // Toggle: if every shown building is already selected, clear them; otherwise select all shown.
+  const statusF = $('bldg-status-filter').value;
+  const shownB = buildings.filter(b => !statusF || (b.canvass_status || 'To Canvass') === statusF);
+  const allSel = shownB.length > 0 && shownB.every(b => selectedBldgs.has(String(b.id)));
+  shownB.forEach(b => { if (allSel) selectedBldgs.delete(String(b.id)); else selectedBldgs.add(String(b.id)); });
+  renderBuildings();
+});
 
 function openBuilding(id) {
   editingBuildingId = id;
