@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MBRE Tenant-Rep CRM</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   :root {
     --bg: #f4f5f7;
@@ -165,6 +166,29 @@
   table.grid td.stage-cell { padding: 4px 6px; }
   table.grid td.stage-cell .card-stage { max-width: 175px; }
   table.grid td.empty { text-align: center; color: var(--muted); white-space: normal; }
+  table.grid th.chk-col, table.grid td.chk-col { width: 34px; text-align: center; padding: 6px; }
+  table.grid td.chk-col input, table.grid th.chk-col input { width: 16px; height: 16px; cursor: pointer; }
+
+  /* ---------- Map view ---------- */
+  #map { height: 72vh; width: 100%; border: 1px solid var(--line); border-radius: 12px; }
+  .map-note { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+  .leaflet-popup-content { font-size: 13px; line-height: 1.4; }
+
+  /* ---------- Printable visit list ---------- */
+  #print-area { display: none; }
+  #print-area h1 { font-size: 20px; margin: 0 0 2px; }
+  #print-area .pmeta { font-size: 12px; color: #444; margin-bottom: 12px; }
+  #print-area h2 { font-size: 14px; margin: 16px 0 6px; border-bottom: 1.5px solid #000; padding-bottom: 2px; }
+  #print-area .pitem { margin: 0 0 9px; padding: 0 0 8px; border-bottom: 1px dashed #bbb; }
+  #print-area .pline1 { font-size: 14px; }
+  #print-area .pline { font-size: 12px; color: #222; margin-top: 2px; }
+  #print-area .pbox { display: inline-block; width: 13px; height: 13px; border: 1.5px solid #000; vertical-align: middle; margin-right: 7px; }
+  @media print {
+    body > *:not(#print-area) { display: none !important; }
+    #print-area { display: block !important; }
+    #print-area .pitem { break-inside: avoid; }
+    @page { margin: 0.6in; }
+  }
 
   .stage-group { margin-bottom: 26px; }
   .stage-head {
@@ -248,9 +272,11 @@
       <button class="btn" id="add-btn">+ Add lead</button>
       <input id="search" class="search" type="search" placeholder="Search company, contact, address, notes…">
       <div class="grow"></div>
+      <button type="button" class="btn" id="print-btn" title="Print the checked leads as a visit list">🖨 Print list (0)</button>
       <div class="viewtoggle">
         <button type="button" class="vt active" id="view-cards">Cards</button>
         <button type="button" class="vt" id="view-table">Table</button>
+        <button type="button" class="vt" id="view-map">Map</button>
       </div>
       <label class="count" for="code-filter">Code:</label>
       <select id="code-filter"><option value="">All codes</option></select>
@@ -341,6 +367,10 @@
   </div>
 </dialog>
 
+<!-- Hidden on screen; filled in and shown only when printing the visit list -->
+<div id="print-area"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ================= CONFIG (your Supabase project) ================= */
@@ -376,6 +406,8 @@ let originalStage = null;   // remembers a lead's stage when the edit form opens
 let view = 'cards';         // 'cards' or 'table'
 let sortKey = null, sortDir = 1;   // table sorting
 let searchText = '';
+const selected = new Set();  // lead ids checked for the print/visit list
+let mapObj = null;           // Leaflet map instance (Map view)
 
 /* ================= Boot ================= */
 init();
@@ -467,8 +499,11 @@ function render() {
   if (codeF) shown = shown.filter(l => (l.location_code || '') === codeF);
   if (q) shown = shown.filter(l => leadMatches(l, q));
   $('lead-count').textContent = shown.length + (shown.length === 1 ? ' lead' : ' leads');
+  if (view !== 'map' && mapObj) { try { mapObj.remove(); } catch (_) {} mapObj = null; }
   if (view === 'table') renderTable(shown);
+  else if (view === 'map') renderMap(shown);
   else renderCards(shown);
+  updatePrintBtn();
 }
 
 function renderCards(shown) {
@@ -515,16 +550,19 @@ function renderTable(shown) {
     });
   }
   let html = '<div class="table-wrap"><table class="grid"><thead><tr>';
+  html += '<th class="chk-col"><input type="checkbox" id="chk-all" title="Check/uncheck all shown"></th>';
   TABLE_COLS.forEach(([k, label]) => {
     const arrow = sortKey === k ? (sortDir === 1 ? ' ▲' : ' ▼') : '';
     html += '<th data-sort="' + k + '">' + esc(label) + arrow + '</th>';
   });
   html += '</tr></thead><tbody>';
   if (!data.length) {
-    html += '<tr><td class="empty" colspan="' + TABLE_COLS.length + '">No leads match. Try clearing the search or the stage filter.</td></tr>';
+    html += '<tr><td class="empty" colspan="' + (TABLE_COLS.length + 1) + '">No leads match. Try clearing the search or the stage filter.</td></tr>';
   }
   data.forEach(l => {
     html += '<tr data-edit="' + l.id + '">';
+    html += '<td class="chk-col"><input type="checkbox" class="row-chk" data-id="' + l.id + '"' +
+            (selected.has(String(l.id)) ? ' checked' : '') + '></td>';
     TABLE_COLS.forEach(([k]) => {
       if (k === 'stage') {
         const opts = STAGES.map(s => '<option' + (s === l.stage ? ' selected' : '') + '>' + esc(s) + '</option>').join('') +
@@ -534,6 +572,11 @@ function renderTable(shown) {
         html += '<td class="num">' + (l.rsf ? Number(l.rsf).toLocaleString() : '') + '</td>';
       } else if (k === 'notes') {
         html += '<td class="notes-cell" title="' + esc(l.notes || '') + '">' + esc(l.notes || '') + '</td>';
+      } else if (k === 'next_followup') {
+        const c = followupColor(l.next_followup);
+        html += '<td' + (c ? ' style="color:' + c + ';font-weight:600"' : '') + '>' + esc(fmtDate(l.next_followup)) + '</td>';
+      } else if (k === 'lease_expiration') {
+        html += '<td>' + esc(fmtDate(l.lease_expiration)) + '</td>';
       } else {
         html += '<td>' + esc(l[k] == null ? '' : l[k]) + '</td>';
       }
@@ -553,20 +596,136 @@ function renderTable(shown) {
     sel.addEventListener('change', () => changeStage(sel.getAttribute('data-id'), sel.value));
   });
   container.querySelectorAll('tr[data-edit]').forEach(tr => tr.addEventListener('click', (e) => {
-    if (e.target.closest('.stage-cell')) return;
+    if (e.target.closest('.stage-cell') || e.target.closest('.chk-col')) return;
     openDialog(tr.getAttribute('data-edit'));
   }));
+
+  // Row checkboxes (build the visit list)
+  const allBox = $('chk-all');
+  const syncAll = () => { if (allBox) allBox.checked = data.length > 0 && data.every(l => selected.has(String(l.id))); };
+  container.querySelectorAll('.row-chk').forEach(cb => {
+    cb.addEventListener('click', e => e.stopPropagation());
+    cb.addEventListener('change', () => {
+      const id = String(cb.getAttribute('data-id'));
+      if (cb.checked) selected.add(id); else selected.delete(id);
+      syncAll(); updatePrintBtn();
+    });
+  });
+  if (allBox) {
+    syncAll();
+    allBox.addEventListener('click', e => e.stopPropagation());
+    allBox.addEventListener('change', () => {
+      data.forEach(l => { if (allBox.checked) selected.add(String(l.id)); else selected.delete(String(l.id)); });
+      updatePrintBtn(); renderTable(shown);
+    });
+  }
 }
+
+function updatePrintBtn() {
+  $('print-btn').textContent = '🖨 Print list (' + selected.size + ')';
+}
+
+// Build a printable, block-grouped visit sheet from the checked leads and open the print dialog.
+function doPrint() {
+  const chosen = leads.filter(l => selected.has(String(l.id)));
+  if (!chosen.length) {
+    alert('First switch to Table view and tick the checkboxes (left column) for the leads you want to visit, then click Print list.');
+    return;
+  }
+  chosen.sort((a, b) =>
+    String(a.location_code || 'zzz').localeCompare(String(b.location_code || 'zzz')) ||
+    String(a.tenant_name || '').localeCompare(String(b.tenant_name || '')));
+
+  let html = '<h1>Pop-in / Follow-up List</h1>' +
+    '<div class="pmeta">' + chosen.length + ' stop' + (chosen.length === 1 ? '' : 's') +
+    ' · printed ' + fmtDate(new Date().toISOString().slice(0, 10)) + '</div>';
+  let curCode = null;
+  chosen.forEach(l => {
+    const code = l.location_code || '—';
+    if (code !== curCode) { curCode = code; html += '<h2>Block ' + esc(code) + '</h2>'; }
+    const addr = [l.address, l.floor ? 'Fl ' + l.floor : ''].filter(Boolean).join(' · ');
+    html += '<div class="pitem"><div class="pline1"><span class="pbox"></span> <b>' +
+      esc(l.tenant_name || '(unnamed tenant)') + '</b> — ' + esc(addr) + '</div>';
+    const contact = [l.contact_name, l.phone, l.email].filter(Boolean).map(esc).join(' · ');
+    if (contact) html += '<div class="pline">' + contact + '</div>';
+    const dates = [];
+    if (l.lease_expiration) dates.push('Lease exp: ' + fmtDate(l.lease_expiration));
+    if (l.next_followup) dates.push('Follow-up: ' + fmtDate(l.next_followup));
+    if (l.last_popin_date) dates.push('Last pop-in: ' + fmtDate(l.last_popin_date) + ' (' + (Number(l.popin_count) || 0) + ')');
+    if (dates.length) html += '<div class="pline">' + esc(dates.join('  ·  ')) + '</div>';
+    if (l.notes) html += '<div class="pline">Notes: ' + esc(l.notes) + '</div>';
+    html += '</div>';
+  });
+
+  $('print-area').innerHTML = html;
+  window.print();
+}
+$('print-btn').addEventListener('click', doPrint);
 
 function setView(v) {
   view = v;
   $('view-cards').classList.toggle('active', v === 'cards');
   $('view-table').classList.toggle('active', v === 'table');
-  document.querySelector('.wrap').classList.toggle('wide', v === 'table');
+  $('view-map').classList.toggle('active', v === 'map');
+  document.querySelector('.wrap').classList.toggle('wide', v === 'table' || v === 'map');
   render();
 }
 $('view-cards').addEventListener('click', () => setView('cards'));
 $('view-table').addEventListener('click', () => setView('table'));
+$('view-map').addEventListener('click', () => setView('map'));
+
+// A lead is "due" if its follow-up is overdue or within the next 7 days.
+function isDue(l) {
+  const d = daysUntil(l.next_followup);
+  return d !== null && d <= 7;
+}
+
+// Map view: plot the due leads as urgency-colored pins on a free OpenStreetMap map.
+function renderMap(shown) {
+  const container = $('leads-container');
+  if (mapObj) { try { mapObj.remove(); } catch (_) {} mapObj = null; }
+  const due = shown.filter(isDue);
+  const located = due.filter(l => l.lat != null && l.lng != null);
+  const missing = due.length - located.length;
+  container.innerHTML =
+    '<div class="map-note">Showing <b>' + due.length + '</b> due lead' + (due.length === 1 ? '' : 's') +
+    ' (overdue or due within 7 days), colored red = urgent → green = further out.' +
+    (missing ? ' <b>' + missing + '</b> not yet mapped (no saved location — open &amp; re-save to locate).' : '') +
+    '</div><div id="map"></div>';
+
+  mapObj = L.map('map').setView([40.7529, -73.9910], 15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { attribution: '© OpenStreetMap contributors', maxZoom: 19 }).addTo(mapObj);
+
+  const pts = [];
+  located.forEach(l => {
+    const color = followupColor(l.next_followup) || '#666';
+    const m = L.circleMarker([l.lat, l.lng], {
+      radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 0.95
+    }).addTo(mapObj);
+    const addr = [l.address, l.floor ? 'Fl ' + l.floor : ''].filter(Boolean).join(' · ');
+    m.bindPopup(
+      '<b>' + esc(l.tenant_name || '(unnamed tenant)') + '</b><br>' + esc(addr) + '<br>' +
+      (l.phone ? esc(l.phone) + '<br>' : '') +
+      'Follow-up: <b style="color:' + color + '">' + esc(fmtDate(l.next_followup)) + '</b><br>' +
+      '<a href="#" onclick="openDialog(\'' + l.id + '\');return false;">Open lead →</a>'
+    );
+    pts.push([l.lat, l.lng]);
+  });
+  if (pts.length) mapObj.fitBounds(pts, { padding: [40, 40], maxZoom: 16 });
+  setTimeout(() => { if (mapObj) mapObj.invalidateSize(); }, 100);
+}
+
+// Look up coordinates for an address via the free OpenStreetMap geocoder.
+async function geocode(address) {
+  try {
+    const q = encodeURIComponent(address + ', New York, NY');
+    const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + q);
+    const j = await r.json();
+    if (j && j[0]) return { lat: parseFloat(j[0].lat), lng: parseFloat(j[0].lon) };
+  } catch (_) {}
+  return null;
+}
 $('search').addEventListener('input', () => { searchText = $('search').value; render(); });
 
 // Change a lead's stage straight from its card, logging a timestamped entry.
@@ -581,14 +740,17 @@ async function changeStage(id, newStage) {
 }
 
 function leadCard(l) {
-  const line = [];
-  if (l.contact_name) line.push(['Contact', l.contact_name]);
-  if (l.phone) line.push(['Phone', l.phone]);
-  if (l.rsf) line.push(['RSF', Number(l.rsf).toLocaleString()]);
-  if (l.lease_expiration) line.push(['Lease exp.', l.lease_expiration]);
-  if (l.next_followup) line.push(['Follow-up', l.next_followup]);
-  if (l.owner) line.push(['Owner', l.owner]);
-  const meta = line.map(([k,v]) => '<div class="k">' + esc(k) + '</div><div>' + esc(v) + '</div>').join('');
+  const line = [];   // each value is already HTML-safe (escaped or a trusted span)
+  if (l.contact_name) line.push(['Contact', esc(l.contact_name)]);
+  if (l.phone) line.push(['Phone', esc(l.phone)]);
+  if (l.rsf) line.push(['RSF', esc(Number(l.rsf).toLocaleString())]);
+  if (l.lease_expiration) line.push(['Lease exp.', esc(fmtDate(l.lease_expiration))]);
+  if (l.next_followup) {
+    const c = followupColor(l.next_followup);
+    line.push(['Follow-up', '<span style="color:' + c + ';font-weight:600">' + esc(fmtDate(l.next_followup)) + '</span>']);
+  }
+  if (l.owner) line.push(['Owner', esc(l.owner)]);
+  const meta = line.map(([k, v]) => '<div class="k">' + esc(k) + '</div><div>' + v + '</div>').join('');
   const addr = [l.address, l.floor ? 'Fl ' + l.floor : ''].filter(Boolean).join(' · ');
   const opts = STAGES.map(s => '<option' + (s === l.stage ? ' selected' : '') + '>' + esc(s) + '</option>').join('') +
     (STAGES.includes(l.stage) ? '' : '<option selected>' + esc(l.stage || '(No stage)') + '</option>');
@@ -775,7 +937,7 @@ function openDialog(id) {
     form.elements['location_code'].dataset.touched = l.location_code ? '1' : '';
     originalStage = l.stage;
     renderLogEl($('activity-view'), l.activity_log, 'No updates logged yet.');
-    $('popin-last').textContent = l.last_popin_date || '—';
+    $('popin-last').textContent = l.last_popin_date ? fmtDate(l.last_popin_date) : '—';
     $('popin-count-view').textContent = (Number(l.popin_count) || 0);
     renderLogEl($('popin-view'), l.popin_log, 'No pop-ins logged yet.');
     del.style.display = 'inline-flex';
@@ -830,6 +992,16 @@ form.addEventListener('submit', async (e) => {
   }
 
   $('save-btn').disabled = true;
+
+  // Look up map coordinates when the address is new or has changed.
+  const curLead = editingId ? leads.find(l => String(l.id) === String(editingId)) : null;
+  if (payload.address && (!curLead || curLead.address !== payload.address || curLead.lat == null)) {
+    $('save-btn').textContent = 'Locating…';
+    const g = await geocode(payload.address);
+    $('save-btn').textContent = 'Save';
+    if (g) { payload.lat = g.lat; payload.lng = g.lng; }
+  }
+
   let error;
   if (editingId) ({ error } = await sb.from('leads').update(payload).eq('id', editingId));
   else ({ error } = await sb.from('leads').insert(payload));
@@ -879,6 +1051,31 @@ function stamp() {
   return new Date().toLocaleString(undefined, {
     year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
   });
+}
+
+// Format a stored date (YYYY-MM-DD) for display as MM/DD/YYYY.
+function fmtDate(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) return iso || '';
+  const [y, m, d] = iso.split('-');
+  return m + '/' + d + '/' + y;
+}
+
+// Whole days from today until a date (negative = overdue).
+function daysUntil(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) return null;
+  const [y, m, d] = iso.split('-').map(Number);
+  const due = new Date(y, m - 1, d);
+  const n = new Date();
+  const today = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+  return Math.round((due - today) / 86400000);
+}
+
+// Follow-up urgency color: red (overdue/now) → orange → green (4+ months out).
+function followupColor(iso) {
+  const d = daysUntil(iso);
+  if (d === null) return '';
+  const t = Math.max(0, Math.min(1, d / 120));   // 0 days = red, 120 days = green
+  return 'hsl(' + Math.round(t * 120) + ', 75%, 40%)';
 }
 
 // Render a timestamped log (newest first) into an element.
