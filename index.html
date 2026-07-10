@@ -347,7 +347,12 @@
           <div class="field"><label>RSF</label><input name="rsf" inputmode="numeric"></div>
           <div class="field"><label>Contact name</label><input name="contact_name"></div>
           <div class="field"><label>Lease expiration</label><input name="lease_expiration" type="date"></div>
-          <div class="field"><label>Email</label><input name="email" type="email"></div>
+          <div class="field"><label>Email</label>
+            <div style="display:flex; gap:8px;">
+              <input name="email" type="email" style="flex:1;">
+              <button type="button" class="btn secondary" id="email-btn" title="Compose an email to this contact">✉ Email</button>
+            </div>
+          </div>
           <div class="field"><label>Phone</label><input name="phone"></div>
         </div>
       </fieldset>
@@ -616,7 +621,7 @@ const TABLE_COLS = [
   ['tenant_name', 'Company'], ['contact_name', 'Contact'], ['address', 'Address'],
   ['floor', 'Floor'], ['rsf', 'RSF'], ['phone', 'Phone'], ['email', 'Email'],
   ['lease_expiration', 'Lease exp.'], ['next_followup', 'Follow-up'],
-  ['stage', 'Stage'], ['location_code', 'Code'], ['notes', 'Notes'],
+  ['stage', 'Stage'], ['owner', 'Owner'], ['location_code', 'Code'], ['notes', 'Notes'],
 ];
 
 function renderTable(shown) {
@@ -1335,6 +1340,30 @@ form.addEventListener('submit', async (e) => {
   if (error) { alert('Could not save: ' + error.message); return; }
   dialog.close();
   loadLeads();
+});
+
+// Compose an email to this lead's contact in your own mail app, and log it to the Activity Log.
+$('email-btn').addEventListener('click', async () => {
+  const email = form.elements['email'].value.trim();
+  if (!email) { alert('No email on file for this lead — add one first.'); return; }
+  if (!editingId) { alert('Save this lead first, then click Email.'); return; }
+  const contact = form.elements['contact_name'].value.trim();
+  const company = form.elements['tenant_name'].value.trim();
+  const subject = company ? 'MBRE Advisors — ' + company : 'MBRE Advisors';
+  const body = 'Hi ' + (contact || 'there') + ',\n\n';
+  const mailto = 'mailto:' + encodeURIComponent(email) +
+    '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  const a = document.createElement('a');
+  a.href = mailto; a.click();   // hands off to your default mail app (Outlook, Gmail, etc.)
+
+  // Log it in the Activity Log
+  const lead = leads.find(l => String(l.id) === String(editingId)) || {};
+  const entry = stamp() + ': Emailed ' + (contact || email) + ' <' + email + '>';
+  const activity_log = entry + (lead.activity_log ? '\n' + lead.activity_log : '');
+  const { error } = await sb.from('leads').update({ activity_log }).eq('id', editingId);
+  if (error) { alert('Email opened, but could not log it: ' + error.message); return; }
+  lead.activity_log = activity_log;
+  renderLogEl($('activity-view'), activity_log, 'No updates logged yet.');
 });
 
 $('delete-btn').addEventListener('click', async () => {
