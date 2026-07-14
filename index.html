@@ -533,6 +533,16 @@ async function init() {
   });
   codeEl.addEventListener('input', () => { codeEl.dataset.touched = '1'; });
 
+  // Same auto-fill for the Buildings form.
+  const bAddr = $('building-form').elements['address'];
+  const bCode = $('building-form').elements['location_code'];
+  bAddr.addEventListener('input', () => {
+    if (bCode.dataset.touched === '1') return;
+    const code = computeLocationCode(bAddr.value);
+    if (code) bCode.value = code;
+  });
+  bCode.addEventListener('input', () => { bCode.dataset.touched = '1'; });
+
   const { data: { session } } = await sb.auth.getSession();
   showView(session);
   sb.auth.onAuthStateChange((_e, sess) => showView(sess));
@@ -1016,9 +1026,11 @@ function openBuilding(id) {
     const b = buildings.find(x => String(x.id) === String(id));
     $('bldg-title').textContent = b.address || 'Building';
     for (const el of bform.elements) { if (el.name && b[el.name] != null) el.value = b[el.name]; }
+    bform.elements['location_code'].dataset.touched = b.location_code ? '1' : '';
     del.style.display = 'inline-flex';
   } else {
     $('bldg-title').textContent = 'Add building';
+    bform.elements['location_code'].dataset.touched = '';
     del.style.display = 'none';
   }
   renderBuildingLeads(id);
