@@ -834,7 +834,7 @@ function renderMap(shown) {
   const missing = due.length - located.length;
   container.innerHTML =
     '<div class="map-note">Showing <b>' + due.length + '</b> due lead' + (due.length === 1 ? '' : 's') +
-    ' (overdue or due within 7 days), colored red = urgent → green = further out.' +
+    ' (overdue or due within 7 days) — red = overdue, orange = due within the next month.' +
     (missing ? ' <b>' + missing + '</b> not yet mapped (no saved location — open &amp; re-save to locate).' : '') +
     '</div><div id="map"></div>';
 
@@ -1587,12 +1587,13 @@ function daysUntil(iso) {
   return Math.round((due - today) / 86400000);
 }
 
-// Follow-up urgency color: red (overdue/now) → orange → green (4+ months out).
+// Follow-up color: RED = overdue, ORANGE = due within the next month, GREEN = further out.
 function followupColor(iso) {
   const d = daysUntil(iso);
   if (d === null) return '';
-  const t = Math.max(0, Math.min(1, d / 120));   // 0 days = red, 120 days = green
-  return 'hsl(' + Math.round(t * 120) + ', 75%, 40%)';
+  if (d < 0) return '#c0392b';     // overdue
+  if (d <= 30) return '#d97706';   // due within the next month
+  return '#15803d';                // more than a month away
 }
 
 // Render a timestamped log (newest first) into an element.
