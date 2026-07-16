@@ -697,7 +697,8 @@ function renderTable(shown) {
         html += '<td class="notes-cell" title="' + esc(l.notes || '') + '">' + esc(l.notes || '') + '</td>';
       } else if (k === 'next_followup') {
         const c = followupColor(l.next_followup);
-        html += '<td' + (c ? ' style="color:' + c + ';font-weight:600"' : '') + '>' + esc(fmtDate(l.next_followup)) + '</td>';
+        html += '<td' + (c ? ' style="background:' + c + ';color:#000;font-weight:600"' : '') + '>' +
+                esc(fmtDate(l.next_followup)) + '</td>';
       } else if (k === 'lease_expiration') {
         html += '<td>' + esc(fmtDate(l.lease_expiration)) + '</td>';
       } else {
@@ -852,7 +853,8 @@ function renderMap(shown) {
     m.bindPopup(
       '<b>' + esc(l.tenant_name || '(unnamed tenant)') + '</b><br>' + esc(addr) + '<br>' +
       (l.phone ? esc(l.phone) + '<br>' : '') +
-      'Follow-up: <b style="color:' + color + '">' + esc(fmtDate(l.next_followup)) + '</b><br>' +
+      'Follow-up: <b style="background:' + color + ';color:#000;padding:1px 5px;border-radius:4px;">' +
+        esc(fmtDate(l.next_followup)) + '</b><br>' +
       '<a href="#" onclick="openDialog(\'' + l.id + '\');return false;">Open lead →</a>'
     );
     pts.push([l.lat, l.lng]);
@@ -1149,7 +1151,8 @@ function renderToday() {
     html += '<div class="day-item" data-edit="' + l.id + '">' +
       '<div class="di-top">' + esc(l.tenant_name || '(unnamed tenant)') + '</div>' +
       '<div class="di-sub">' + esc(l.address || '') + (l.floor ? ' · Fl ' + esc(l.floor) : '') +
-      ' · <b style="color:' + c + '">Due ' + esc(fmtDate(l.next_followup)) + '</b>' +
+      ' · <b style="background:' + c + ';color:#000;padding:1px 5px;border-radius:4px;">Due ' +
+        esc(fmtDate(l.next_followup)) + '</b>' +
       (l.phone ? ' · ' + esc(l.phone) : '') + '</div></div>';
   });
   html += '</div></div>';
@@ -1206,7 +1209,8 @@ function leadCard(l) {
   if (l.lease_expiration) line.push(['Lease exp.', esc(fmtDate(l.lease_expiration))]);
   if (l.next_followup) {
     const c = followupColor(l.next_followup);
-    line.push(['Follow-up', '<span style="color:' + c + ';font-weight:600">' + esc(fmtDate(l.next_followup)) + '</span>']);
+    line.push(['Follow-up', '<span style="background:' + c + ';color:#000;font-weight:600;padding:1px 6px;border-radius:5px;">' +
+      esc(fmtDate(l.next_followup)) + '</span>']);
   }
   if (l.owner) line.push(['Owner', esc(l.owner)]);
   const meta = line.map(([k, v]) => '<div class="k">' + esc(k) + '</div><div>' + v + '</div>').join('');
@@ -1587,13 +1591,14 @@ function daysUntil(iso) {
   return Math.round((due - today) / 86400000);
 }
 
-// Follow-up color: RED = overdue, ORANGE = due within the next month, GREEN = further out.
+// Follow-up highlight: RED = overdue, ORANGE = due within the next month, GREEN = further out.
+// Returns a BACKGROUND colour — the date text is drawn in black on top of it.
 function followupColor(iso) {
   const d = daysUntil(iso);
   if (d === null) return '';
-  if (d < 0) return '#c0392b';     // overdue
-  if (d <= 30) return '#d97706';   // due within the next month
-  return '#15803d';                // more than a month away
+  if (d < 0) return '#ff8a80';     // overdue
+  if (d <= 30) return '#ffb74d';   // due within the next month
+  return '#81c784';                // more than a month away
 }
 
 // Render a timestamped log (newest first) into an element.
