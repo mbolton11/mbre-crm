@@ -141,6 +141,18 @@
     background: #fff; min-width: 220px; flex: 0 1 320px;
   }
   .search:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  /* multi-select code filter */
+  .ms { position: relative; display: inline-block; }
+  .ms-panel {
+    position: absolute; top: calc(100% + 4px); right: 0; z-index: 20;
+    background: #fff; border: 1px solid var(--line); border-radius: 9px;
+    box-shadow: 0 8px 24px rgba(16,24,40,.15); padding: 8px; min-width: 150px;
+    max-height: 320px; overflow: auto;
+  }
+  .ms-clear { display: block; font-size: 12px; color: var(--accent); margin-bottom: 6px; text-decoration: none; }
+  .ms-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .ms-item:hover { background: #f3f7fc; }
+
   .viewtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
   .vt { background: #fff; border: none; padding: 8px 14px; font-size: 13px; color: var(--muted); }
   .vt.active { background: var(--brand); color: #fff; }
@@ -329,8 +341,13 @@
         <button type="button" class="vt" id="view-today">Today</button>
       </div>
       <span class="lead-only" style="display:contents">
-        <label class="count" for="code-filter">Code:</label>
-        <select id="code-filter"><option value="">All codes</option></select>
+        <div class="ms" id="code-ms">
+          <button type="button" class="btn secondary" id="code-ms-btn">Codes: All ▾</button>
+          <div class="ms-panel" id="code-ms-panel" hidden>
+            <a href="#" id="code-ms-clear" class="ms-clear">Clear all</a>
+            <div id="code-ms-list"></div>
+          </div>
+        </div>
         <label class="count" for="stage-filter">Show:</label>
         <select id="stage-filter"><option value="">All stages</option></select>
         <span class="count" id="lead-count"></span>
@@ -510,6 +527,7 @@ let view = 'cards';         // 'cards' or 'table'
 let sortKey = null, sortDir = 1;   // table sorting
 let searchText = '';
 const selected = new Set();  // lead ids checked for the print/visit list
+const selectedCodes = new Set();  // location codes ticked in the Code filter (empty = all)
 let mapObj = null;           // Leaflet map instance (Map view)
 let buildings = [];          // all buildings
 let editingBuildingId = null;
@@ -594,14 +612,39 @@ async function loadLeads() {
   render();
 }
 
-// Fill the Code dropdown with the distinct location codes currently in use.
+// Build the Code filter checklist from the distinct location codes currently in use.
 function populateCodeFilter() {
-  const sel = $('code-filter');
-  const cur = sel.value;
+  const list = $('code-ms-list');
   const codes = [...new Set(leads.map(l => l.location_code).filter(Boolean))].sort();
-  sel.innerHTML = '<option value="">All codes</option>' +
-    codes.map(c => '<option' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
+  // drop any selected codes that no longer exist
+  [...selectedCodes].forEach(c => { if (!codes.includes(c)) selectedCodes.delete(c); });
+  list.innerHTML = codes.map(c =>
+    '<label class="ms-item"><input type="checkbox" value="' + esc(c) + '"' +
+    (selectedCodes.has(c) ? ' checked' : '') + '> ' + esc(c) + '</label>').join('');
+  list.querySelectorAll('input').forEach(cb => cb.addEventListener('change', () => {
+    if (cb.checked) selectedCodes.add(cb.value); else selectedCodes.delete(cb.value);
+    updateCodeBtn();
+    render();
+  }));
+  updateCodeBtn();
 }
+function updateCodeBtn() {
+  const n = selectedCodes.size;
+  $('code-ms-btn').textContent = (n ? 'Codes: ' + n + ' selected' : 'Codes: All') + ' ▾';
+}
+$('code-ms-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('code-ms-panel').hidden = !$('code-ms-panel').hidden;
+});
+$('code-ms-clear').addEventListener('click', (e) => {
+  e.preventDefault();
+  selectedCodes.clear();
+  populateCodeFilter();
+  render();
+});
+document.addEventListener('click', (e) => {
+  if (!$('code-ms').contains(e.target)) $('code-ms-panel').hidden = true;
+});
 
 // Does a lead match the current search text?
 function leadMatches(l, q) {
@@ -614,10 +657,9 @@ function leadMatches(l, q) {
 function render() {
   const filter = $('stage-filter').value;
   const q = searchText.trim().toLowerCase();
-  const codeF = $('code-filter').value;
   let shown = leads;
   if (filter) shown = shown.filter(l => (l.stage || '') === filter);
-  if (codeF) shown = shown.filter(l => (l.location_code || '') === codeF);
+  if (selectedCodes.size) shown = shown.filter(l => selectedCodes.has(l.location_code || ''));
   if (q) shown = shown.filter(l => leadMatches(l, q));
   $('lead-count').textContent = shown.length + (shown.length === 1 ? ' lead' : ' leads');
   if (view !== 'map' && mapObj) { try { mapObj.remove(); } catch (_) {} mapObj = null; }
@@ -1230,7 +1272,6 @@ function leadCard(l) {
 }
 
 $('stage-filter').addEventListener('change', render);
-$('code-filter').addEventListener('change', render);
 
 /* ================= Quick capture ================= */
 $('parse-btn').addEventListener('click', async () => {
