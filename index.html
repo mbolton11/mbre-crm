@@ -195,6 +195,12 @@
   .lead[data-bldg] { cursor: pointer; position: relative; }
   .bldg-check { width: 16px; height: 16px; cursor: pointer; }
 
+  /* ---------- Top 25 front page ---------- */
+  .topline { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 14px; }
+  .topline input { width: 17px; height: 17px; cursor: pointer; }
+  .wrap.top25 .lead-only { display: none !important; }
+  .wrap.top25 .capture { display: none; }
+
   /* ---------- Today (daily progress) view ---------- */
   .today-only { display: none; }
   .wrap.today .lead-only { display: none !important; }
@@ -334,7 +340,8 @@
         <button type="button" class="btn" id="print-canvass-btn" title="Print the checked buildings as a canvass list">🖨 Print canvass (0)</button>
       </span>
       <div class="viewtoggle">
-        <button type="button" class="vt active" id="view-cards">Cards</button>
+        <button type="button" class="vt active" id="view-top25">⭐ Top 25</button>
+        <button type="button" class="vt" id="view-cards">Cards</button>
         <button type="button" class="vt" id="view-table">Table</button>
         <button type="button" class="vt" id="view-map">Map</button>
         <button type="button" class="vt" id="view-buildings">Buildings</button>
@@ -373,6 +380,7 @@
   <form id="lead-form" method="dialog">
     <div class="dlg-head"><h2 id="dlg-title">Add lead</h2></div>
     <div class="dlg-body">
+      <label class="topline"><input type="checkbox" name="is_top"> ⭐ Top 25 lead <span class="muted-note">(pin to the front page)</span></label>
       <fieldset>
         <legend>Property</legend>
         <div class="grid2">
@@ -523,7 +531,7 @@ const dialog = $('lead-dialog'), form = $('lead-form');
 let leads = [];
 let editingId = null;
 let originalStage = null;   // remembers a lead's stage when the edit form opens, to log changes
-let view = 'cards';         // 'cards' or 'table'
+let view = 'top25';         // landing view: Top 25 front page
 let sortKey = null, sortDir = 1;   // table sorting
 let searchText = '';
 const selected = new Set();  // lead ids checked for the print/visit list
@@ -667,6 +675,7 @@ function render() {
   else if (view === 'map') renderMap(shown);
   else if (view === 'buildings') renderBuildings();
   else if (view === 'today') renderToday();
+  else if (view === 'top25') renderTop25();
   else renderCards(shown);
   updatePrintBtn();
 }
@@ -844,21 +853,53 @@ function doPrint() {
 }
 $('print-btn').addEventListener('click', doPrint);
 
+function applyViewClasses() {
+  ['top25', 'cards', 'table', 'map', 'buildings', 'today'].forEach(x => {
+    const b = $('view-' + x); if (b) b.classList.toggle('active', view === x);
+  });
+  const w = document.querySelector('.wrap');
+  w.classList.toggle('wide', view === 'table' || view === 'map' || view === 'buildings');
+  w.classList.toggle('buildings', view === 'buildings');
+  w.classList.toggle('today', view === 'today');
+  w.classList.toggle('top25', view === 'top25');
+}
 function setView(v) {
   view = v;
-  ['cards', 'table', 'map', 'buildings', 'today'].forEach(x => $('view-' + x).classList.toggle('active', v === x));
-  const w = document.querySelector('.wrap');
-  w.classList.toggle('wide', v === 'table' || v === 'map' || v === 'buildings');
-  w.classList.toggle('buildings', v === 'buildings');
-  w.classList.toggle('today', v === 'today');
   if (v === 'today' && !$('today-date').value) $('today-date').value = todayYMD();
+  applyViewClasses();
   render();
 }
+applyViewClasses();   // establish the default (Top 25) view's layout on load
+$('view-top25').addEventListener('click', () => setView('top25'));
 $('view-cards').addEventListener('click', () => setView('cards'));
 $('view-table').addEventListener('click', () => setView('table'));
 $('view-map').addEventListener('click', () => setView('map'));
 $('view-buildings').addEventListener('click', () => setView('buildings'));
 $('view-today').addEventListener('click', () => setView('today'));
+
+// ⭐ Top 25 front page — the leads you've pinned, most-urgent follow-up first.
+function renderTop25() {
+  const container = $('leads-container');
+  const top = leads.filter(l => l.is_top);
+  top.sort((a, b) => {
+    const da = daysUntil(a.next_followup), db = daysUntil(b.next_followup);
+    if (da === null && db === null) return String(a.tenant_name || '').localeCompare(String(b.tenant_name || ''));
+    if (da === null) return 1;
+    if (db === null) return -1;
+    return da - db;
+  });
+  let html = '<h2 style="margin:0 0 4px;">⭐ Top 25 Leads <span style="color:var(--muted);font-weight:400;">(' + top.length + ')</span></h2>';
+  html += '<div class="map-note">Your priority list — open any lead and tick <b>⭐ Top 25</b> to pin it here.' +
+          (top.length > 25 ? ' <b style="color:#c0392b;">You have ' + top.length + ' pinned — more than 25.</b>' : '') + '</div>';
+  if (!top.length) {
+    container.innerHTML = html + '<div class="empty">No Top 25 leads yet. Open a lead and tick <b>⭐ Top 25</b> to pin it here.</div>';
+    return;
+  }
+  html += '<div class="cards">' + top.map(l => leadCard(l)).join('') + '</div>';
+  container.innerHTML = html;
+  container.querySelectorAll('[data-edit]').forEach(btn => btn.addEventListener('click', () => openDialog(btn.getAttribute('data-edit'))));
+  container.querySelectorAll('.card-stage').forEach(sel => sel.addEventListener('change', () => changeStage(sel.getAttribute('data-id'), sel.value)));
+}
 $('today-date').addEventListener('change', render);
 $('print-day-btn').addEventListener('click', doPrintDay);
 
@@ -1261,6 +1302,7 @@ function leadCard(l) {
     (STAGES.includes(l.stage) ? '' : '<option selected>' + esc(l.stage || '(No stage)') + '</option>');
   return '<div class="lead">' +
     (l.location_code ? '<span class="badge-code">' + esc(l.location_code) + '</span> ' : '') +
+    (l.is_top ? '⭐ ' : '') +
     '<span class="tenant">' + esc(l.tenant_name || '(unnamed tenant)') + '</span>' +
     '<div class="addr">' + esc(addr || '—') + '</div>' +
     (meta ? '<div class="meta">' + meta + '</div>' : '') +
@@ -1435,7 +1477,9 @@ function openDialog(id) {
     const l = leads.find(x => String(x.id) === String(id));
     $('dlg-title').textContent = 'Edit lead';
     for (const el of form.elements) {
-      if (el.name && l[el.name] != null) el.value = l[el.name];
+      if (!el.name) continue;
+      if (el.type === 'checkbox') { el.checked = !!l[el.name]; continue; }
+      if (l[el.name] != null) el.value = l[el.name];
     }
     // An existing code counts as user-set, so typing the address won't overwrite it.
     form.elements['location_code'].dataset.touched = l.location_code ? '1' : '';
@@ -1464,6 +1508,7 @@ form.addEventListener('submit', async (e) => {
   const payload = {};
   for (const el of form.elements) {
     if (!el.name) continue;
+    if (el.type === 'checkbox') { payload[el.name] = el.checked; continue; }
     let v = el.value;
     if (v === '' && NULL_IF_EMPTY.includes(el.name)) v = null;
     else if (v === '') v = null;
