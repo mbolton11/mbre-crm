@@ -162,9 +162,10 @@
     overflow-x: auto; border: 1px solid var(--line); border-radius: 12px;
     background: #fff; box-shadow: var(--shadow);
   }
-  table.grid { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.grid { border-collapse: collapse; width: 100%; font-size: 12.5px; table-layout: fixed; }
   table.grid th, table.grid td {
-    padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap;
+    padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   table.grid th {
     position: sticky; top: 0; background: #eef1f5; cursor: pointer; user-select: none;
@@ -711,6 +712,11 @@ const TABLE_COLS = [
   ['lease_expiration', 'Lease exp.'], ['next_followup', 'Follow-up'],
   ['stage', 'Stage'], ['owner', 'Owner'], ['notes', 'Notes'],
 ];
+// fixed widths for the narrow columns; the rest share the remaining space so everything fits on one screen
+const COL_W = {
+  location_code: '52px', floor: '46px', rsf: '56px', phone: '112px',
+  lease_expiration: '82px', next_followup: '86px', stage: '150px', owner: '74px',
+};
 
 function renderTable(shown) {
   const container = $('leads-container');
@@ -727,7 +733,8 @@ function renderTable(shown) {
   html += '<th class="chk-col"><input type="checkbox" id="chk-all" title="Check/uncheck all shown"></th>';
   TABLE_COLS.forEach(([k, label]) => {
     const arrow = sortKey === k ? (sortDir === 1 ? ' ▲' : ' ▼') : '';
-    html += '<th data-sort="' + k + '">' + esc(label) + arrow + '</th>';
+    const w = COL_W[k] ? ' style="width:' + COL_W[k] + '"' : '';
+    html += '<th data-sort="' + k + '"' + w + '>' + esc(label) + arrow + '</th>';
   });
   html += '</tr></thead><tbody>';
   if (!data.length) {
@@ -752,8 +759,11 @@ function renderTable(shown) {
                 esc(fmtDate(l.next_followup)) + '</td>';
       } else if (k === 'lease_expiration') {
         html += '<td>' + esc(fmtDate(l.lease_expiration)) + '</td>';
+      } else if (k === 'phone') {
+        html += '<td title="' + esc(formatPhone(l.phone)) + '">' + esc(formatPhone(l.phone)) + '</td>';
       } else {
-        html += '<td>' + esc(l[k] == null ? '' : l[k]) + '</td>';
+        const val = l[k] == null ? '' : String(l[k]);
+        html += '<td title="' + esc(val) + '">' + esc(val) + '</td>';
       }
     });
     html += '</tr>';
@@ -837,7 +847,7 @@ function doPrint() {
     const addr = [l.address, l.floor ? 'Fl ' + l.floor : ''].filter(Boolean).join(' · ');
     html += '<div class="pitem"><div class="pline1"><span class="pbox"></span> <b>' +
       esc(l.tenant_name || '(unnamed tenant)') + '</b> — ' + esc(addr) + '</div>';
-    const contact = [l.contact_name, l.phone, l.email].filter(Boolean).map(esc).join(' · ');
+    const contact = [l.contact_name, formatPhone(l.phone), l.email].filter(Boolean).map(esc).join(' · ');
     if (contact) html += '<div class="pline">' + contact + '</div>';
     const dates = [];
     if (l.lease_expiration) dates.push('Lease exp: ' + fmtDate(l.lease_expiration));
@@ -935,7 +945,7 @@ function renderMap(shown) {
     const addr = [l.address, l.floor ? 'Fl ' + l.floor : ''].filter(Boolean).join(' · ');
     m.bindPopup(
       '<b>' + esc(l.tenant_name || '(unnamed tenant)') + '</b><br>' + esc(addr) + '<br>' +
-      (l.phone ? esc(l.phone) + '<br>' : '') +
+      (l.phone ? esc(formatPhone(l.phone)) + '<br>' : '') +
       'Follow-up: <b style="background:' + color + ';color:#000;padding:1px 5px;border-radius:4px;">' +
         esc(fmtDate(l.next_followup)) + '</b><br>' +
       '<a href="#" onclick="openDialog(\'' + l.id + '\');return false;">Open lead →</a>'
@@ -1081,7 +1091,7 @@ function doPrintCanvass() {
     const inb = leads.filter(l => String(l.building_id) === String(b.id))
       .sort((x, y) => String(x.floor || '').localeCompare(String(y.floor || ''), undefined, { numeric: true }));
     inb.forEach(l => {
-      const bits = [l.floor ? 'Fl ' + l.floor : '', l.tenant_name || '(unnamed)', l.stage || '', l.phone || '']
+      const bits = [l.floor ? 'Fl ' + l.floor : '', l.tenant_name || '(unnamed)', l.stage || '', formatPhone(l.phone)]
         .filter(Boolean).map(esc).join(' · ');
       html += '<div class="pline">☐ ' + bits + '</div>';
     });
@@ -1236,7 +1246,7 @@ function renderToday() {
       '<div class="di-sub">' + esc(l.address || '') + (l.floor ? ' · Fl ' + esc(l.floor) : '') +
       ' · <b style="background:' + c + ';color:#000;padding:1px 5px;border-radius:4px;">Due ' +
         esc(fmtDate(l.next_followup)) + '</b>' +
-      (l.phone ? ' · ' + esc(l.phone) : '') + '</div></div>';
+      (l.phone ? ' · ' + esc(formatPhone(l.phone)) : '') + '</div></div>';
   });
   html += '</div></div>';
 
@@ -1287,7 +1297,7 @@ async function changeStage(id, newStage) {
 function leadCard(l) {
   const line = [];   // each value is already HTML-safe (escaped or a trusted span)
   if (l.contact_name) line.push(['Contact', esc(l.contact_name)]);
-  if (l.phone) line.push(['Phone', esc(l.phone)]);
+  if (l.phone) line.push(['Phone', esc(formatPhone(l.phone))]);
   if (l.rsf) line.push(['RSF', esc(Number(l.rsf).toLocaleString())]);
   if (l.lease_expiration) line.push(['Lease exp.', esc(fmtDate(l.lease_expiration))]);
   if (l.next_followup) {
@@ -1516,6 +1526,8 @@ form.addEventListener('submit', async (e) => {
     payload[el.name] = v;
   }
 
+  if (payload.phone) payload.phone = formatPhone(payload.phone);   // store in US format
+
   // Build any timestamped activity-log entries (a typed update and/or a stage change).
   const additions = [];
   const upd = $('update-text').value.trim();
@@ -1658,6 +1670,17 @@ function todayYMD() { return localYMD(new Date()); }
 function datePrefixFor(ymd) {
   const [y, m, d] = ymd.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// Format a clean US phone number as (212) 989-0695. Leaves messy/multi-number/extension entries alone.
+function formatPhone(v) {
+  if (!v) return '';
+  const s = String(v).trim();
+  if (/[a-z\/]/i.test(s)) return s;           // has letters, extension (x), or multiple numbers (/) — leave as-is
+  let d = s.replace(/\D/g, '');
+  if (d.length === 11 && d[0] === '1') d = d.slice(1);
+  if (d.length === 10) return '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6);
+  return s;                                    // not a clean 10-digit number — leave as typed
 }
 
 // Format asking rent as $00.00.
